@@ -1,0 +1,10 @@
+# This folder doubles as the working folder for videos: only the kit itself is tracked.
+/*
+!/.gitignore
+!/README.md
+!/SKILL.md
+!/setup.sh
+!/speech_text.py
+!/kokoro_service.py
+!/explainer_lib.py
+!/prenarrate.py

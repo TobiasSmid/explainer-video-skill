@@ -1,0 +1,45 @@
+"""manim-voiceover speech service using the local Kokoro voice (settings live in speech_text.py)."""
+import os
+from pathlib import Path
+
+import onnxruntime as rt
+import soundfile as sf
+from kokoro_onnx import Kokoro
+from manim_voiceover.helper import remove_bookmarks
+from manim_voiceover.services.base import SpeechService, initialize_speech_service
+
+import speech_text
+
+MODELS = Path(os.environ.get("KOKORO_MODELS", Path(__file__).resolve().parent / "models"))
+_KOKORO = None
+
+
+def _engine():
+    global _KOKORO
+    if _KOKORO is None:
+        opts = rt.SessionOptions()
+        # onnxruntime's default uses one thread in this workspace; all cores make narration 1.6x faster
+        opts.intra_op_num_threads = len(os.sched_getaffinity(0))
+        session = rt.InferenceSession(str(MODELS / "kokoro-timed.onnx"), opts, providers=["CPUExecutionProvider"])
+        _KOKORO = Kokoro.from_session(session, str(MODELS / "voices.bin"))
+    return _KOKORO
+
+
+class KokoroService(SpeechService):
+    def __init__(self, **kwargs):
+        initialize_speech_service(self, kwargs)
+
+    def input_data(self, text):
+        """The cache key: the spoken text plus every setting that changes the audio."""
+        return {"input_text": remove_bookmarks(text), "service": "kokoro", "settings": speech_text.settings()}
+
+    def generate_from_text(self, text, cache_dir=None, path=None, **kwargs):
+        cache_dir = cache_dir or self.cache_dir
+        input_data = self.input_data(text)
+        cached = self.get_cached_result(input_data, cache_dir)
+        if cached is not None:
+            return cached
+        audio_path = path or (self.get_audio_basename(input_data) + ".wav")
+        samples, sr = speech_text.narrate(_engine(), input_data["input_text"])
+        sf.write(str(Path(cache_dir) / audio_path), samples, sr)
+        return {"input_text": text, "input_data": input_data, "original_audio": str(audio_path)}
