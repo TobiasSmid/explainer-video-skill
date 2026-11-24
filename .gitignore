@@ -1,10 +1,9 @@
-# This folder doubles as the working folder for videos: only the kit itself is tracked.
+# A clone can double as the working folder for videos (see setup.sh), so only the plugin itself is tracked.
 /*
 !/.gitignore
+!/.claude-plugin/
+!/skills/
 !/README.md
 !/LICENSE
 !/setup.sh
-!/speech_text.py
-!/kokoro_service.py
-!/explainer_lib.py
-!/prenarrate.py
+__pycache__/

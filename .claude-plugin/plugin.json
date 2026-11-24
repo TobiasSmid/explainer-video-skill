@@ -1,0 +1,13 @@
+{
+  "name": "explainer-video",
+  "displayName": "Explainer Video",
+  "description": "Narrated, animated explainer videos of math and course topics, made with Manim and a text-to-speech voice that runs locally.",
+  "author": {
+    "name": "TobiasSmid",
+    "url": "https://github.com/TobiasSmid"
+  },
+  "homepage": "https://github.com/TobiasSmid/explainer-video-skill",
+  "repository": "https://github.com/TobiasSmid/explainer-video-skill",
+  "license": "MIT",
+  "keywords": ["video", "manim", "animation", "math", "education", "voiceover", "text-to-speech"]
+}
