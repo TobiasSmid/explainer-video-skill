@@ -18,8 +18,10 @@ def _engine():
     global _KOKORO
     if _KOKORO is None:
         opts = rt.SessionOptions()
-        # onnxruntime's default uses one thread in this workspace; all cores make narration 1.6x faster
-        opts.intra_op_num_threads = len(os.sched_getaffinity(0))
+        # onnxruntime's default can end up on one thread (it does in Claude's cloud workspace);
+        # using all cores makes narration 1.6x faster
+        cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
+        opts.intra_op_num_threads = cores or 1
         session = rt.InferenceSession(str(MODELS / "kokoro-timed.onnx"), opts, providers=["CPUExecutionProvider"])
         _KOKORO = Kokoro.from_session(session, str(MODELS / "voices.bin"))
     return _KOKORO

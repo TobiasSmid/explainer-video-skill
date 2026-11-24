@@ -1,38 +1,43 @@
 ---
-name: "explainer-video"
-description: "Make 3b1b-style animated explainer videos (manim + local Kokoro voiceover) about course topics from material the user names; splits big topics into a series automatically. Use instead of generic video skills."
+name: explainer-video
+description: Make narrated, animated explainer videos in the style of 3Blue1Brown (3b1b) with Manim and a Kokoro text-to-speech voice that runs locally. Use when the user asks for an explainer or explanation video of a math, computer-science or other course topic, optionally from material they name (slides, notes, a PDF). Big topics are split into a series of videos automatically. Use instead of generic video skills for such requests.
 ---
 
 # 3b1b-style explainer videos with voiceover
 
 The user says something like "make a video about X" (optionally "use lecture 4 / my notes / this PDF").
-You deliver finished 720p MP4s with animations in the style of 3Blue1Brown and a narrated voiceover
-in the user's chosen voice. There is NO length limit: a video is as long as its material needs.
+You deliver finished 720p MP4s with animations in the style of 3Blue1Brown and a narrated voiceover.
+There is NO length limit: a video is as long as its material needs.
 Cover everything in the material the user points to; never cut content to hit a length.
 Every video is self-contained: it makes complete sense on its own, without the slides and without other videos.
 When the material holds several topics, split it into a series of smaller videos (section 2) and make all of
-them. Never ask the user questions: decide, tell them the plan, and start working right away.
+them. Do not stop to ask questions: decide, tell the user the plan, and start working right away. They can
+redirect you at any time.
 
-Set up a task list: find material, plan the split, set up tools, then one task per video (script, scene,
-draft + check, final render, deliver). Tell the user roughly how long it takes so they are not left waiting
-blindly: per minute of finished video, about 30 seconds of narration, 10 seconds of draft and 15 seconds of
-final render, plus the time to write the script and the scene.
+Set up a task list if the session has one: find material, plan the split, set up tools, then one task per
+video (script, scene, draft + check, final render, deliver). Tell the user roughly how long it takes so they
+are not left waiting blindly: per minute of finished video, about 30 seconds of narration, 10 seconds of draft
+and 15 seconds of final render (measured on the 2 cores of Claude's cloud workspace), plus the time to write
+the script and the scene.
 When making more than one video, ALWAYS follow the pipeline in section 10: the user wants to start watching
 video 1 while the next ones are still being made, not get the whole batch at the end.
 
 Keeping videos cheap and fast (all of this was measured; do not drop it):
-- Never retype code that exists as a file. The code comes from the user's GitHub repo (section 3), and
-  files go to the project with `local_path` (section 9).
+- Never retype code that exists as a file. The code ships with this skill and setup copies it into place
+  (section 3), and files go to a project with `local_path` (section 9).
 - Start the narration in the background as soon as the script exists, and write the scene meanwhile (section 5).
 - Never poll with `sleep`. Wait for a job in one command that returns the moment the job ends (section 8).
 - One draft, one look at its sheets, one final render: fix everything the draft reports before the final.
 
 ## 1. Find the material
 
-- If the user names material (a lecture, slides, exercise sheet, uploaded file, project doc), use exactly that.
-- If they only name a topic or a course, search Google Drive (Google_Drive search_files, fullText contains
-  the topic keywords) and read the matching slides/handouts with read_file_content. Prefer the newest
-  handout version (e.g. "-v2"). Also check attached project docs.
+- If the user names material (a lecture, slides, an exercise sheet, an attached file, a file in the working
+  folder, a project doc), use exactly that.
+- If they only name a topic or a course, look for their material first: attached files, project docs, the
+  working folder, and any connected file store (for example a Google Drive connector: search for the topic
+  keywords and read the matching slides or handouts). Prefer the newest version of a handout (e.g. "-v2").
+- If there is no material to find, make the video from your own knowledge of the topic in standard textbook
+  notation, and say in the plan that no course material was used.
 - Extract: the theorems/definitions, the course's exact notation (e.g. D_A = (Q_A, Σ, δ_A, q_A, F_A)),
   the constructions, the proof structures, and any examples the course uses.
 - The videos must match the course notation and be mathematically correct. Re-verify any example you invent
@@ -57,8 +62,9 @@ is missed, but never show slide numbers or page ranges to the user or in the vid
   - estimate each video's length (about 140 spoken words per minute plus animation pauses).
 - The order of the videos is always the order of the topics in the material. Never reorder videos, and never
   shorten or cut a video to make it arrive sooner.
-- Do NOT ask anything (no AskUserQuestion, no "which videos should I make?", no format question). Send the plan
-  with SendUserMessage and immediately start making ALL videos. The plan message has:
+- Do NOT ask anything (no "which videos should I make?", no format question). Tell the user the plan and
+  immediately start making ALL videos. Where the session has a SendUserMessage tool, send the plan with it, so
+  the user sees it while you keep working. The plan has:
   - a numbered list: **title** (the question it answers), then one line on what it covers, then "~N min";
   - the total length;
   - how delivery works: "I'm making all N now, in this order, in a pipeline: while one video renders, I write
@@ -67,77 +73,85 @@ is missed, but never show slide numbers or page ranges to the user or in the vid
     (X = setup + script + draft + render of video 1; Y = the longer of scripting one video and rendering one.)
 - If the user interrupts to change the plan ("merge 2 and 3", "skip 5"), adjust and keep going.
 
-Each selected video then goes through sections 5-9. Separate videos share one workspace folder ($EX, section 3), one scene file
-per video (`01_union.py`, `02_concatenation.py`, ...) and numbered outputs (`01_union_construction.mp4`),
-keep the same colors and notation across the series, and are produced with the pipeline in section 10.
+Each selected video then goes through sections 5-9. Separate videos share one working folder ($EX, section 3),
+one scene file per video (`01_union.py`, `02_concatenation.py`, ...) and numbered outputs
+(`01_union_construction.mp4`), keep the same colors and notation across the series, and are produced with the
+pipeline in section 10.
 For one big video, each topic becomes a chapter (same pipeline, chapter by chapter, joined at the end).
 
-## 3. Set up the workspace (cloud Linux workspace)
+## 3. Set up the workspace
 
-Network notes: Hugging Face and cloud TTS APIs (OpenAI, ElevenLabs, Google, Edge) are BLOCKED from the
-workspace. GitHub release downloads, pip and apt work. So the voice is Kokoro, run locally.
+Everything runs on the machine this session runs on: Claude's cloud workspace (Linux), or the user's own
+computer in Claude Code. The voice is Kokoro, run locally. It needs no account and no API key, and it works in
+the cloud workspace, where Hugging Face and the cloud TTS services are blocked but GitHub release downloads,
+pip and apt work.
 
-All code lives in the user's public GitHub repo TobiasSmid/explainer-video-skill: speech_text.py (the voice),
+The code ships with this skill, in the `scripts/` folder next to this SKILL.md: speech_text.py (the voice),
 kokoro_service.py (the manim-voiceover service), prenarrate.py, explainer_lib.py (scene helpers) and setup.sh.
-Never retype these files. Clone the repo as the working folder `explainer` inside the session's working
-directory (what `pwd` shows at the start, so usually /home/claude/explainer). The folder is called $EX below:
-write the absolute path out in every command, because shell variables do not persist between commands. Do not
-work in the home directory (~): it is outside the working directory, so files there cannot be uploaded to the
-project without retyping them.
+The folder's path is `${CLAUDE_SKILL_DIR}/scripts`. If that path does not begin with a real folder (it still
+shows a placeholder in curly braces), use the `scripts` folder in the base directory this skill was loaded
+from. Never retype these files.
 
-Right after reading the material, clone the repo and start the setup as a background job, so it finishes
-while you write the split plan and the first script:
+Work in a folder `explainer` inside the session's working directory (what `pwd` shows at the start; in the
+cloud workspace usually /home/claude/explainer). The folder is called $EX below: write the absolute path out in
+every command, because shell variables do not persist between commands. In the cloud workspace, do not work in
+the home directory (~): it is outside the working directory, so files there cannot be uploaded to a project
+without retyping them.
+
+Right after reading the material, start the setup as a background job, so it finishes while you write the
+split plan and the first script:
 ```bash
-git clone --depth 1 https://github.com/TobiasSmid/explainer-video-skill $EX; cd $EX && bash setup.sh > setup.log 2>&1; echo "EXIT $?" >> setup.log
+mkdir -p $EX && cd $EX && bash "${CLAUDE_SKILL_DIR}/scripts/setup.sh" > setup.log 2>&1; echo "EXIT $?" >> setup.log
 ```
-setup.sh installs manim, the voice packages and LaTeX and downloads the Kokoro model (a few minutes the first
-time in a session, seconds when run again); setup.log ends with SETUP OK. The cloned folder is also the working
-folder: scenes, beats files, models and media sit next to the code and are ignored by git.
-No separate smoke test is needed: the first prenarrate run tests the voice, and the first draft tests manim.
+setup.sh copies the four code files into $EX, installs what is missing (LaTeX, ffmpeg and sox with apt; manim
+and the voice packages with pip) and downloads the Kokoro model from its GitHub release into $EX/models (about
+350 MB). That takes a few minutes the first time and seconds when run again; setup.log then ends with SETUP OK
+and EXIT 0. No separate smoke test is needed: the first prenarrate run tests the voice, and the first draft
+tests manim.
 
-If the clone is refused, call add_repo (owner TobiasSmid, repo explainer-video-skill, access "read") and clone
-again. If the repo still cannot be reached, say so in one line and fall back to the copies in the project docs
-(`claude/speech_text.py`, `claude/kokoro_service.py`, `claude/prenarrate.py`, `claude/explainer_lib.py`,
-`claude/setup.sh`): read each with project_read and write it into $EX with the Write tool. That is slow, so
-it is the last resort.
+Read setup.log when the job is done:
+- `VENV <path>`: setup made or found a Python virtualenv in $EX (it does that when it is not root in a
+  container). Start every later command with `export PATH=<path>:$PATH;` so python3 and manim come from it.
+- `MISSING ...`: system packages are missing and setup did not install them (it never uses sudo). Show the
+  user the install command from the log, and run setup again once they have installed them.
+- `KEPT <file>`: $EX already held a changed copy of a code file, and setup left it alone.
 
-Changing the code (a voice setting, a CUSTOM word, a helper): edit the file in $EX and test it, then call
-add_repo with access "push", commit and push that file, and update its project copy with project_write and
-`local_path`. Code changes do not need a change to this skill. The repo is public: never commit course
-material, scenes, or anything personal to it.
+Changing the code (a voice setting, a CUSTOM word, a helper): edit the copy in $EX and test it. That copy
+belongs to the folder. In a cloud session the folder is gone when the session ends, so when the user wants to
+keep a change, save the changed file where later sessions can get it (the project, if the session is attached
+to one: section 9), and put it back into $EX before running setup. Setup keeps copies that are already there.
 
-## 4. The voice (already chosen by the user, do not change unless asked)
+## 4. The voice (do not change it unless asked)
 
 Kokoro, the single voice am_puck (never a blend of voices), at a slightly lively pace (PACE 19.5, about 140
-words per minute including pauses), with the warmer sound on (WARM = True). The user picked this by ear from
-four versions: calm or livelier, each with and without the warmer sound. Pauses follow rules: about 0.2 s at a
-comma, 0.5 s after a sentence, 0.7 s after a question, and the same pause at the end of every voiceover block.
-All settings are at the top of speech_text.py.
-Why each piece exists (the user heard every one of these problems; do not undo the fixes):
+words per minute including pauses), with the warmer sound on (WARM = True). Pauses follow rules: about 0.2 s at
+a comma, 0.5 s after a sentence, 0.7 s after a question, and the same pause at the end of every voiceover
+block. All settings are at the top of speech_text.py.
+Why each piece exists (each one fixes a problem that listeners noticed; do not undo the fixes):
 - Pronunciation comes from misaki, Kokoro's own G2P. Raw espeak phonemes (kokoro-onnx's default) stress
   words wrongly ("automata") and sound more artificial.
 - misaki writes the soft American t as "ɾ"; Kokoro v1.0 needs "T". With "ɾ" it rolls an r, and "automata"
   comes out as "automatar" with a foreign accent.
-- Kokoro picks a different voice style for every input length, so pitch and tone jumped from one sentence
+- Kokoro picks a different voice style for every input length, so pitch and tone jump from one sentence
   to the next ("nasal, then normal again"). narrator() uses one fixed style for everything.
-- Kokoro talks faster the longer its input, so long sentences sounded rushed and short ones slow. render()
+- Kokoro talks faster the longer its input, so long sentences sound rushed and short ones slow. render()
   measures every unit with the model's timings and re-renders it until it hits PACE.
 - Pauses are spliced into the gaps the model already left, so sentences stay whole. Do not go back to
   synthesizing sentences in pieces cut at commas.
-- Blended voices and the low-rated voices (am_liam, am_eric: grade D) sounded unstable to the user.
+- Blended voices and the low-rated voices (am_liam, am_eric: grade D) sound unstable.
 - Without the letter rule, a standalone "A" is read as the article "uh" ("if uh is regular").
 - Symbols like ∪ are silently dropped unless normalize() turns them into words.
 Speed: narration takes about half a minute per minute of audio. Two things keep it that fast: kokoro_service.py
-runs Kokoro on all cores (onnxruntime's default uses one core here, 1.6x slower), and render() learns the
-voice's natural rate as it goes, so most sentences need one synthesis pass instead of two.
+runs Kokoro on all cores, and render() learns the voice's natural rate as it goes, so most sentences need one
+synthesis pass instead of two.
 You cannot hear the audio, so check it with numbers: pass `log=[]` to speak() for the pace of every unit, and
 measure the silences in the output. Ask the user to name the second where something sounds off.
-When the user flags a mispronounced word, add it to CUSTOM in speech_text.py, re-render, and push the change
-to the repo (section 3).
+When the user flags a mispronounced word, add it to CUSTOM in speech_text.py and re-render.
 If the user wants a different voice: render a short comparison MP3 of SINGLE voices through this same
 pipeline (`narrator(k, "am_michael")`; each voice says its own name, then the same passage) and let them
 pick; then set VOICE. Kokoro's best-rated male voices are am_michael, am_fenrir and am_puck (C+), then
-bm_george and bm_fable (C). The best overall is af_heart (A). Kokoro has no Dutch voice; narrate in English.
+bm_george and bm_fable (C). The best overall is af_heart (A). The pronunciation pipeline is English only:
+narrate in English, also when the material is in another language.
 Never clone or imitate a real person's voice; offer generic qualities (calm, warm, slower) instead.
 
 ## 5. Write the script (3b1b style)
@@ -147,7 +161,7 @@ One script per video, written as a beats file `beats_01_union.py` that holds one
 with one entry per narration block, in order, under a short descriptive key. The scene refers to beats by
 key, so narration text is typed once.
 
-As soon as the beats file is written, start the narration with run_in_background and go on to the scene:
+As soon as the beats file is written, start the narration as a background job and go on to the scene:
 ```bash
 cd $EX && python3 prenarrate.py beats_01_union > narr_01.log 2>&1; echo "EXIT $?" >> narr_01.log
 ```
@@ -281,15 +295,16 @@ Draft-render every chapter/video and check each.
 ```bash
 cd $EX && manim -r 1280,720 --frame_rate 24 --encoder-option preset=veryfast --max-inflight-encoders 4 --progress_bar none 01_union.py UnionConstruction > final_01.log 2>&1; echo "EXIT $?" >> final_01.log
 ```
-The user chose 720p at 24 fps to make videos faster; do not raise them unless asked. It takes about
-15 seconds per minute of video, or about twice that when a second render or prenarrate runs at the same
-time. The two encoder flags make it a third faster at the same picture quality and file size (measured);
-keep them. Never pass `--disable_caching`: with caching on, re-rendering after a small fix only redoes the
-changed animations. Never run more heavy jobs at once (manim renders and prenarrate together) than `nproc`
-(usually 2): extra jobs only slow every job down.
+720p at 24 fps is the default because it keeps renders fast: about 15 seconds per minute of video, or about
+twice that when a second render or prenarrate runs at the same time. Use 1080p (`-r 1920,1080 --frame_rate 30`,
+nearly twice as slow) only when the user asks for it. The two encoder flags make the render a third faster at
+the same picture quality and file size (measured); keep them. Never pass `--disable_caching`: with caching on,
+re-rendering after a small fix only redoes the changed animations. Never run more heavy jobs at once (manim
+renders and prenarrate together) than the machine has cores (`nproc`; 2 in the cloud workspace): extra jobs
+only slow every job down.
 
 A single video: run the final in the foreground with a timeout of 600000 ms when the estimate is under
-8 minutes. Longer videos, and every video of a series: start it with run_in_background and keep working.
+8 minutes. Longer videos, and every video of a series: start it as a background job and keep working.
 When there is nothing left to do but wait, wait in ONE command that returns the moment the render ends
 (timeout 600000 ms; repeat it if the render is still going), instead of polling with `sleep 300`:
 ```bash
@@ -309,13 +324,13 @@ ffmpeg -loglevel error -y -f concat -safe 0 -i chapters.txt -c copy $EX/01_union
 
 ## 9. Deliver
 
-- Give each video a clear numbered name (e.g. $EX/01_union_construction.mp4) and send it with SendUserFile
-  (display: render) as soon as it is finished; don't hold finished videos back until the whole series is done.
+- Give each video a clear numbered name (e.g. $EX/01_union_construction.mp4) and hand it over as soon as it
+  is finished; don't hold finished videos back until the whole series is done. Where the session has a tool
+  that sends files to the user (SendUserFile, display: render), use it; otherwise tell the user the full path.
 - If the session is attached to a claude.ai Project, save each scene file and beats file to the project with
   project_write and `local_path` (path `claude/<name>.py`). Never paste a file's content into the call: that
   retypes the whole file. Keep a short series plan there too (`claude/<course>-video-plan.md`: titles, topics
-  covered, status), so later sessions can continue the series. The code files live in the repo and need
-  no saving.
+  covered, status), so later sessions can continue the series.
 - Reply briefly: what each video covers (one line each), that you checked frames but cannot hear the audio
   (ask them to flag odd words), and which exercises were left for them to do.
 
@@ -324,24 +339,25 @@ ffmpeg -loglevel error -y -f concat -safe 0 -i chapters.txt -c copy $EX/01_union
 Goal: the user starts watching video 1 as early as possible, and every next video follows as soon as it is done,
 always in the material's order. Never script everything first and render everything at the end.
 
-1. Right after sending the plan: attach and clone the repo and start setup.sh in the background (section 3).
+1. Right after sending the plan: start setup.sh in the background (section 3).
 2. Work strictly in the material's order (video 1, 2, 3, ...). Video 1: beats file -> prenarrate in the
    background -> scene -> draft -> check sheets -> fix -> start its final render as a background job. Get
    video 1 out first; don't start video 2's beats before video 1's final render is running.
 3. While video N's final render runs, write video N+1's beats, start its prenarrate, write its scene and draft
    it. As soon as that draft is clean, start its final render.
-4. Keep at most `nproc` heavy jobs running at once (drafts, finals and prenarrate together). If both slots are
-   busy, keep writing instead of waiting idle.
-5. Every time a final render finishes: verify it (ffprobe + one frame), send it right away with SendUserFile,
-   post a one-line SendUserMessage ("Video 2 of 5 is ready: <title>. Video 3 in about N min."), tick its task,
-   and start the next queued final render. Deliver in order: if a later video finishes before an earlier one,
+4. Keep at most as many heavy jobs running at once as the machine has cores (drafts, finals and prenarrate
+   together). If every slot is busy, keep writing instead of waiting idle.
+5. Every time a final render finishes: verify it (ffprobe + one frame), hand it over right away (section 9),
+   tell the user in one line ("Video 2 of 5 is ready: <title>. Video 3 in about N min."), tick its task, and
+   start the next queued final render. Deliver in order: if a later video finishes before an earlier one,
    hold it and send it right after the earlier one.
-6. Do not end your turn while renders are still running or videos are still queued: background jobs are
-   stopped a few minutes after the reply ends. When you have nothing to write, wait with the `until grep`
-   command of section 8 (not with `sleep`), and keep going until every video is delivered. Never stop halfway to ask whether to continue.
+6. Do not end your turn while renders are still running or videos are still queued: in a cloud session,
+   background jobs are stopped a few minutes after the reply ends. When you have nothing to write, wait with
+   the `until grep` command of section 8 (not with `sleep`), and keep going until every video is delivered.
+   Never stop halfway to ask whether to continue.
 7. If the user writes in between (e.g. "how long left"), answer from the logs with a concrete estimate and
    keep the pipeline going.
 8. For one big video: run the same pipeline per chapter, send finished chapters as previews in order, and
    join them (section 8) once the last one is done.
-9. After all videos are delivered, update the series plan in the project (status: done) and make sure every
-   scene and beats file is saved there (with `local_path`).
+9. After all videos are delivered, update the series plan in the project if there is one (status: done) and
+   make sure every scene and beats file is saved there (with `local_path`).

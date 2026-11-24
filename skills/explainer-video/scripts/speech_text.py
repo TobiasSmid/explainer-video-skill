@@ -7,7 +7,7 @@ Script conventions:
   - "[pause 0.8]" adds 0.8 seconds of extra silence between beats.
   - Force a pronunciation with misaki's inline syntax: [Kleene](/klˈAni/), or add the word to CUSTOM.
 
-How it gets an even, human delivery (each point fixes something the user heard):
+How it gets an even, human delivery (each point fixes a problem you can hear without it):
   - Pronunciation: misaki's G2P (dictionary + part of speech), the phonemes Kokoro was trained on,
     with the soft American t written as "T". ("ɾ" makes Kokoro roll an r: a foreign accent.)
   - One voice: Kokoro picks a different voice style for every input length, which shifts pitch and
@@ -26,14 +26,14 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 
-# ---- The user's narration voice ----
-VOICE = "am_puck"        # ONE Kokoro voice. Never blend voices: the user heard blends as unstable.
+# ---- The narration voice ----
+VOICE = "am_puck"        # ONE Kokoro voice. Never blend voices: blends sound unstable.
 BRITISH = VOICE[0] == "b"  # a British voice (bm_/bf_) needs British sounds instead of American ones
 PACE = 19.5              # speaking rate in sounds per second (about 140 words/min with pauses). Lower = calmer.
 CLAUSE_PAUSE = 0.20      # after , ; :
 SENTENCE_PAUSE = 0.50    # after . !
 QUESTION_PAUSE = 0.70    # after ?  (a question gets a moment to land)
-WARM = True              # warmer, softer sound (EQ + gentle compression); the user chose it by ear
+WARM = True              # warmer, softer sound (EQ + gentle compression); False = Kokoro's plain output
 STYLE_ROWS = (100, 160)  # the voice style Kokoro uses for a normal-length sentence, used for everything
 
 SR = 24000
