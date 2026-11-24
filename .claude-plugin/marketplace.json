@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "explainer-video",
-      "source": "./",
+      "source": "./plugin",
       "description": "Narrated, animated explainer videos of math and course topics, made with Manim and a text-to-speech voice that runs locally."
     }
   ]

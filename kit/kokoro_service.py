@@ -10,7 +10,7 @@ from manim_voiceover.services.base import SpeechService, initialize_speech_servi
 
 import speech_text
 
-MODELS = Path(os.environ.get("KOKORO_MODELS", Path(__file__).resolve().parent / "models"))
+MODELS = Path(__file__).resolve().parent / "models"  # the model files sit next to this module
 _KOKORO = None
 
 

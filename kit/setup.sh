@@ -15,7 +15,7 @@ for f in speech_text.py kokoro_service.py explainer_lib.py prenarrate.py; do
   if [ ! -f "$f" ]; then
     cp "$SRC/$f" "$f"
   elif ! cmp -s "$SRC/$f" "$f"; then
-    echo "KEPT $f (it differs from the skill's copy; delete it to get the skill's version)"
+    echo "KEPT $f (it differs from the copy in kit/; delete it to get that version)"
   fi
 done
 # manim asks PyPI for its newest version on every run; switch that off, so rendering needs no network

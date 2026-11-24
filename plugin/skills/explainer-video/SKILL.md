@@ -23,8 +23,8 @@ When making more than one video, ALWAYS follow the pipeline in section 10: the u
 video 1 while the next ones are still being made, not get the whole batch at the end.
 
 Keeping videos cheap and fast (all of this was measured; do not drop it):
-- Never retype code that exists as a file. The code ships with this skill and setup copies it into place
-  (section 3), and files go to a project with `local_path` (section 9).
+- Never retype code that exists as a file. The code ships with this skill and one command copies it into
+  place (section 3), and files go to a project with `local_path` (section 9).
 - Start the narration in the background as soon as the script exists, and write the scene meanwhile (section 5).
 - Never poll with `sleep`. Wait for a job in one command that returns the moment the job ends (section 8).
 - One draft, one look at its sheets, one final render: fix everything the draft reports before the final.
@@ -82,15 +82,9 @@ For one big video, each topic becomes a chapter (same pipeline, chapter by chapt
 ## 3. Set up the workspace
 
 Everything runs on the machine this session runs on: Claude's cloud workspace (Linux), or the user's own
-computer in Claude Code. The voice is Kokoro, run locally. It needs no account and no API key, and it works in
-the cloud workspace, where Hugging Face and the cloud TTS services are blocked but GitHub release downloads,
-pip and apt work.
-
-The code ships with this skill, in the `scripts/` folder next to this SKILL.md: speech_text.py (the voice),
-kokoro_service.py (the manim-voiceover service), prenarrate.py, explainer_lib.py (scene helpers) and setup.sh.
-The folder's path is `${CLAUDE_SKILL_DIR}/scripts`. If that path does not begin with a real folder (it still
-shows a placeholder in curly braces), use the `scripts` folder in the base directory this skill was loaded
-from. Never retype these files.
+computer in Claude Code. The voice is Kokoro, run locally, with no account or sign-in. That also works in the
+cloud workspace, where Hugging Face and the cloud TTS services are blocked: everything needed comes from the
+system package manager, PyPI and GitHub.
 
 Work in a folder `explainer` inside the session's working directory (what `pwd` shows at the start; in the
 cloud workspace usually /home/claude/explainer). The folder is called $EX below: write the absolute path out in
@@ -98,28 +92,61 @@ every command, because shell variables do not persist between commands. In the c
 the home directory (~): it is outside the working directory, so files there cannot be uploaded to a project
 without retyping them.
 
-Right after reading the material, start the setup as a background job, so it finishes while you write the
-split plan and the first script:
-```bash
-mkdir -p $EX && cd $EX && bash "${CLAUDE_SKILL_DIR}/scripts/setup.sh" > setup.log 2>&1; echo "EXIT $?" >> setup.log
-```
-setup.sh copies the four code files into $EX, installs what is missing (LaTeX, ffmpeg and sox with apt; manim
-and the voice packages with pip) and downloads the Kokoro model from its GitHub release into $EX/models (about
-350 MB). That takes a few minutes the first time and seconds when run again; setup.log then ends with SETUP OK
-and EXIT 0. No separate smoke test is needed: the first prenarrate run tests the voice, and the first draft
-tests manim.
+Right after reading the material, start the setup, so that it is finished by the time the first script is
+written. It has three parts.
 
-Read setup.log when the job is done:
-- `VENV <path>`: setup made or found a Python virtualenv in $EX (it does that when it is not root in a
-  container). Start every later command with `export PATH=<path>:$PATH;` so python3 and manim come from it.
-- `MISSING ...`: system packages are missing and setup did not install them (it never uses sudo). Show the
-  user the install command from the log, and run setup again once they have installed them.
-- `KEPT <file>`: $EX already held a changed copy of a code file, and setup left it alone.
+**a. The code.** This skill carries the source of four Python modules in its `references/` folder, one Markdown
+page per module, each with a single `python` code block: `speech_text` (the voice), `kokoro_service` (the
+manim-voiceover service), `prenarrate` and `explainer_lib` (scene helpers). The folder's path is
+`${CLAUDE_SKILL_DIR}/references`. If that path does not begin with a real folder (it still shows a placeholder
+in curly braces), use the `references` folder in the base directory this skill was loaded from. Each code
+block becomes `$EX/<module>.py`, exactly as it is written. Never retype the code; copy the blocks out with
+this command:
+```bash
+R="${CLAUDE_SKILL_DIR}/references"; mkdir -p $EX && cd $EX && for m in speech_text kokoro_service prenarrate explainer_lib; do [ -s $m.py ] || awk '/^```python$/{f=1;next} /^```$/{f=0} f' "$R/$m.md" > $m.py; done; python3 -m py_compile speech_text.py kokoro_service.py prenarrate.py explainer_lib.py && echo "CODE OK"
+```
+A module that is already in $EX is kept, because it may hold the user's own changes.
+
+**b. The tools.** Find out what is already installed, and install only what is missing, following each
+project's own installation instructions:
+- Manim Community: https://docs.manim.community/en/stable/installation.html. It also needs LaTeX (with the
+  latex-extra and recommended-fonts collections), dvisvgm, ffmpeg and the pango development files.
+- manim-voiceover: https://github.com/ManimCommunity/manim-voiceover. It also uses sox.
+- kokoro-onnx, version 0.6 or newer: https://github.com/thewh1teagle/kokoro-onnx
+- misaki: https://github.com/hexgrad/misaki. Take the plain package, without its `en` extra: the extra tries
+  to build spaCy from source, which fails.
+- spaCy from a prebuilt wheel, with its small English model `en_core_web_sm`: https://spacy.io/usage
+- The Python packages soundfile and num2words.
+
+The check that everything is there:
+`python3 -c "import manim, manim_voiceover, kokoro_onnx, misaki, spacy, en_core_web_sm, num2words, soundfile"`,
+plus `latex`, `dvisvgm` and `ffmpeg` on the PATH.
+Where things go: as root in a disposable container (Claude's cloud workspace), install system-wide. On the
+user's own computer, put the Python packages in a virtualenv at `$EX/.venv` and run `python3` and `manim` from
+it in every later command. Do not install system packages there yourself: tell the user which ones are
+missing, and continue when they have installed them.
+
+**c. The voice model.** Kokoro v1.0, in the export that reports timings. It is on the releases page of the
+kokoro-onnx project on GitHub, in the release `model-files-v1.1`:
+https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1. Save its `kokoro-v1.0.onnx` as
+`$EX/models/kokoro-timed.onnx` and its `voices-v1.0.bin` as `$EX/models/voices.bin` (about 350 MB together),
+then compare their SHA-256 checksums:
+`beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a` for the model and
+`bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d` for the voices. The model of the older
+release `model-files-v1.0` and the int8 model report no timings and do not work.
+
+Finally, create `$EX/manim.cfg` with the two lines `[CLI]` and `notify_outdated_version = False`. Without it,
+manim goes online at every render to look for a newer version of itself.
+
+Run parts b and c as ONE background job that writes to `$EX/setup.log` and ends with
+`echo "EXIT $?" >> setup.log`, and write the split plan and the first script while it runs. It takes a few
+minutes the first time in a session. No separate smoke test is needed: the first prenarrate run tests the
+voice, and the first draft tests manim.
 
 Changing the code (a voice setting, a CUSTOM word, a helper): edit the copy in $EX and test it. That copy
 belongs to the folder. In a cloud session the folder is gone when the session ends, so when the user wants to
 keep a change, save the changed file where later sessions can get it (the project, if the session is attached
-to one: section 9), and put it back into $EX before running setup. Setup keeps copies that are already there.
+to one: section 9), and put it back into $EX before part a, which keeps the modules that are already there.
 
 ## 4. The voice (do not change it unless asked)
 
@@ -339,7 +366,7 @@ ffmpeg -loglevel error -y -f concat -safe 0 -i chapters.txt -c copy $EX/01_union
 Goal: the user starts watching video 1 as early as possible, and every next video follows as soon as it is done,
 always in the material's order. Never script everything first and render everything at the end.
 
-1. Right after sending the plan: start setup.sh in the background (section 3).
+1. Right after sending the plan: start the setup (section 3).
 2. Work strictly in the material's order (video 1, 2, 3, ...). Video 1: beats file -> prenarrate in the
    background -> scene -> draft -> check sheets -> fix -> start its final render as a background job. Get
    video 1 out first; don't start video 2's beats before video 1's final render is running.
