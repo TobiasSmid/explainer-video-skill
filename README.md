@@ -95,7 +95,7 @@ otherwise into the virtualenv that is active, or into a new `.venv` in the worki
 - If the session is attached to a Claude Project, the skill tells Claude to save the scripts and scene files of
   your videos to that Project, so that a later session can continue the series. The videos themselves are
   given to you in the conversation, or as files in the working folder.
-- The voice is a stock Kokoro voice. The skill tells Claude never to clone or imitate a real person's voice.
+- The default voice is a stock Kokoro voice.
 
 ## Changing the voice
 

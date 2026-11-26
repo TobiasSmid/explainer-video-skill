@@ -164,7 +164,6 @@ pipeline (`narrator(k, "am_michael")`; each voice says its own name, then the sa
 pick; then set VOICE. Kokoro's best-rated male voices are am_michael, am_fenrir and am_puck (C+), then
 bm_george and bm_fable (C). The best overall is af_heart (A). The pronunciation pipeline is English only:
 narrate in English, also when the material is in another language.
-Never clone or imitate a real person's voice; offer generic qualities (calm, warm, slower) instead.
 
 ## 5. Write the script (3b1b style)
 
