@@ -18,9 +18,11 @@ How it gets an even, human delivery (each point fixes a problem you can hear wit
     spliced into the gap the model already left, so sentences stay in one piece.
 Needs the Kokoro export that reports timings (release "model-files-v1.1") and kokoro-onnx >= 0.6.
 """
+import hashlib
 import re
 import subprocess
 import warnings
+from pathlib import Path
 
 import numpy as np
 
@@ -41,6 +43,18 @@ _SUB = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 _NUM = "zero one two three four five six seven eight nine".split()
 
 SYMBOLS = [
+    (r"<=>|⟺|⇔|↔", " if and only if "), (r"=>|⟹|⇒", " implies "), (r"⟸|⇐", " is implied by "),
+    (r":=|≔", " is defined as "), (r"->|⟶", " goes to "), (r"<=", " is at most "), (r">=", " is at least "),
+    (r"⊇", " is a superset of "), (r"⊃", " is a proper superset of "), (r"⊈|⊄", " is not a subset of "),
+    (r"∖", " minus "), (r"↦", " maps to "), (r"←", " gets "), (r"⊢\*", " yields, in any number of steps, "),
+    (r"⊢", " yields "), (r"⊨", " models "), (r"≡", " is equivalent to "), (r"≈", " is approximately "),
+    (r"∞", " infinity "), (r"ℕ", " the natural numbers "), (r"ℤ", " the integers "), (r"ℚ", " the rationals "),
+    (r"ℝ", " the reals "), (r"∑", " the sum of "), (r"∏", " the product of "), (r"√", " the square root of "),
+    (r"∫", " the integral of "), (r"[⟨⟩⌈⌉⌊⌋]", " "), (r"\+", " plus "),
+    (r"Γ", " capital gamma "), (r"Λ", " capital lambda "), (r"Π", " capital pi "), (r"Ω", " capital omega "),
+    (r"Δ", " capital delta "), (r"Φ", " capital phi "), (r"α", " alpha "), (r"β", " beta "), (r"γ", " gamma "),
+    (r"λ", " lambda "), (r"π", " pi "), (r"θ", " theta "), (r"σ", " sigma "), (r"μ", " mu "), (r"[φϕ]", " phi "),
+    (r"ω", " omega "), (r"τ", " tau "), (r"ρ", " rho "), (r"ψ", " psi "), (r"η", " eta "), (r"κ", " kappa "),
     (r"Σ\*", " sigma star "), (r"Σ", " sigma "), (r"∪", " union "), (r"∩", " intersect "),
     (r"ε", " epsilon "), (r"δ", " delta "), (r"∈", " is in "), (r"∉", " is not in "),
     (r"→", " goes to "), (r"⊆", " is a subset of "), (r"⊂", " is a proper subset of "),
@@ -62,16 +76,104 @@ CUSTOM = {
 
 
 # ---- Pronunciation ----
+_SUP_CHARS = "⁰¹²³⁴⁵⁶⁷⁸⁹ⁿⁱʲᵏᵐˣʸᴿ⁺⁻*"
+_SUP = str.maketrans(_SUP_CHARS[:-1], "0123456789nijkmxyR+-")
+_SUBL = str.maketrans("ₐₑₒₓₕₖₗₘₙₚₛₜᵢⱼ", "aeoxhklmnpstij")
+_EXP_WORDS = {"*": "star", "+": "plus", "R": "reversed", "2": "squared"}
+
+
+_A = ""  # stands for the letter "a" until normalize() ends (SYMBOLS would break the [a](/ˈA/) markup)
+_X = ""  # the same for "x", which misaki drops when it stands alone
+
+
+def _letter(c: str) -> str:
+    # a lone lowercase "a" is read as the article ("uh"); in a formula it is the letter
+    return _A if c == "a" else _X if c == "x" else c
+
+
+def _spell(m) -> str:
+    """`abba` or `0110`: read character by character."""
+    return " ".join(_NUM[int(c)] if c.isdigit() else _letter(c) for c in m.group(1) if not c.isspace())
+
+
+def _math_token(tok: str) -> str:
+    """Speak a formula token like aⁿbⁿ, 0^n1^n, xy^iz, (ab)*, w^R, a^{n+1}, Σ*.
+    Letters are spoken one by one ("x y z", not the word "xyz"), exponents as "to the n"."""
+    tok = re.sub(f"[{_SUP_CHARS[:-1]}]+", lambda m: "^{" + m.group().translate(_SUP) + "}", tok)
+    out, i = [], 0
+    while i < len(tok):
+        c = tok[i]
+        if c == "^" and i + 1 < len(tok):
+            if tok[i + 1] == "{" and "}" in tok[i:]:
+                j = tok.index("}", i)
+                exp, i = tok[i + 2:j], j + 1
+            else:
+                exp, i = tok[i + 1], i + 2
+            out.append(_EXP_WORDS.get(exp, "to the " + " ".join(_letter(x) if x.isalpha() else x for x in exp)))
+            continue
+        if c == "*":
+            out.append("star")
+        elif c.isalpha() and c.isascii():
+            out.append(_letter(c))
+        elif c.isdigit():
+            j = i
+            while j < len(tok) and tok[j].isdigit():
+                j += 1
+            out.append(tok[i:j])
+            i = j
+            continue
+        elif c not in "()":
+            out.append(c)
+        i += 1
+    return " ".join(out)
+
+
+def _bars(m) -> str:
+    inner = m.group(1).strip()
+    if re.fullmatch(r"[a-z]\w?", inner):
+        return f" the length of {inner} "
+    if re.fullmatch(r"[A-Z]\w?", inner):
+        return f" the size of {inner} "
+    return f" the absolute value of {inner} "
+
+
 def normalize(text: str) -> str:
-    # subscripts: q₀ -> "q zero"; D_A -> "D A" (then read as letter names)
+    # `0110` or `abba`: spell it out; a string of digits that starts with 0 is spelled too ("01")
+    text = re.sub(r"`([^`]+)`", _spell, text)
+    text = re.sub(r"(?<![\w.])(0\d+)(?![\w.])", _spell, text)
+    # variable strings like xyz, uvw, uvxyz are spelled ("x y z", not "size")
+    text = re.sub(r"(?<![\w\[`/'])([u-z]{2,5})(?![\w\]`'])", lambda m: " ".join(m.group(1)), text)
+    # "a" where the article is impossible is the letter: "an a", "every a it reads", "a and b", "reads a."
+    text = re.sub(r"\ban a\b", "an " + _A, text)
+    text = re.sub(r"(?<![\w\[`'])a(?=\s*(?:[,.;:?!)]|$)|\s+(?:it|is|and|or|in|on|to|then|by|from|are|was|"
+                  r"but|we|you|has|gets|goes|followed|itself)\b"
+                  r"|\s+[b-z](?=\s*(?:[,.;:?!)]|$)|\s+[a-z](?![\w'])))", _A, text)
+    # misaki drops a lone lowercase x entirely ("the word x" -> "the word"): force the letter name
+    text = re.sub(r"(?<![\w\[`/'])x(?![\w\]`'])", _X, text)
+    # δ(q, a): a short item in a tuple is a symbol, so "a" there is the letter
+    text = re.sub(r"\(([^()]{1,40})\)", lambda m: "(" + ", ".join(
+        _letter(x.strip()) if len(x.strip()) == 1 else x.strip() for x in m.group(1).split(",")) + ")"
+        if "," in m.group(1) else m.group(0), text)
+    # |w| -> "the length of w", |Q| -> "the size of Q"; a lone | (set builder) -> "such that"
+    text = re.sub(r"\|([^|\s][^|]{0,5}?)\|", _bars, text)
+    text = re.sub(r"\s\|\s", " such that ", text)
+    # formulas with exponents or a Kleene star: aⁿbⁿ, a^n, (ab)*, w^R
+    text = " ".join(_math_token(t) if re.search(rf"[\^{_SUP_CHARS}]", t) and not t.startswith("[") else t
+                    for t in text.split(" "))
+    # primes: q′ or q' -> "q prime"
+    text = re.sub(r"(?<![\w'])([A-Za-z])(″|'')(?!\w)", r"\1 double prime", text)
+    text = re.sub(r"(?<![\w'])([A-Za-z])(′|'(?!\w))", r"\1 prime", text)
+    # subscripts: q₀ -> "q zero"; qᵢ -> "q i"; D_A -> "D A" (then read as letter names)
     text = re.sub(r"([A-Za-z])([₀-₉]+)", lambda m: f"{m.group(1)} " + " ".join(
         _NUM[int(d)] for d in m.group(2).translate(_SUB)), text)
+    text = re.sub(r"([A-Za-z])([ₐₑₒₓₕₖₗₘₙₚₛₜᵢⱼ]+)", lambda m: f"{m.group(1)} " + " ".join(
+        m.group(2).translate(_SUBL)), text)
     text = re.sub(r"\b([a-z])(\d)\b", lambda m: f"{m.group(1)} {_NUM[int(m.group(2))]}", text)
     text = text.replace("_", " ")
     for pat, rep in SYMBOLS:
         text = re.sub(pat, rep, text)
     text = re.sub(r"\s+([,.?!;:])", r"\1", text)
-    return re.sub(r"\s{2,}", " ", text).strip()
+    return re.sub(r"\s{2,}", " ", text).strip().replace(_A, "[a](/ˈA/)").replace(_X, "[x](/ˈɛks/)")
 
 
 _G2P, _LETTERS = {}, {}
@@ -102,7 +204,11 @@ def _mark_up(text: str) -> str:
 
 def to_phonemes(k, text: str) -> str:
     text = normalize(text)
-    ps = _g2p()(_mark_up(text))[0]
+    try:
+        ps = _g2p()(_mark_up(text))[0]
+    except Exception:  # misaki can crash on stray symbols: drop them and try again
+        text = re.sub(r"[^\w\s,.?!;:'\-\[\]()/ˈ]", " ", text)
+        ps = _g2p()(_mark_up(text))[0]
     if not BRITISH:
         # Kokoro v1.0 was trained with "T" for the American soft t ("automata", "better"). misaki writes
         # it as "ɾ", which Kokoro reads as a rolled r from its other languages: a foreign-sounding accent.
@@ -205,14 +311,16 @@ def _frames(audio: np.ndarray):
     return hop, n, np.sqrt((audio[: n * hop].reshape(n, hop) ** 2).mean(1) + 1e-12)
 
 
-def _pauses(audio: np.ndarray, timings) -> np.ndarray:
+def _pauses(audio: np.ndarray, timings, inserts: list = None) -> np.ndarray:
     """Set the silence after every comma and inner sentence end, using the model's timings.
 
     Where the model left a gap, silence is added in the middle of that gap up to the target.
     Where it ran straight through a sentence end, the audio is cut at the quietest point near
     the mark (with short fades) so the sentence still gets its pause. The final mark is left
-    to the caller, which adds the end-of-unit pause.
+    to the caller, which adds the end-of-unit pause. `inserts` collects (sample, length) of
+    every silence added, so word times can be moved along with the audio.
     """
+    inserts = [] if inserts is None else inserts
     hop, n, rms = _frames(audio)
     quiet = rms <= rms.max() * 0.01
     marks = [t for t in timings if t.phoneme in _MARKS]
@@ -238,6 +346,7 @@ def _pauses(audio: np.ndarray, timings) -> np.ndarray:
             if missing <= 0 or where <= cut:
                 continue
             parts += [audio[cut:where], np.zeros(int(missing * SR), dtype=np.float32)]
+            inserts.append((where, int(missing * SR)))
         elif t.phoneme in ".!?" or rms[q] <= rms.max() * 0.05:
             # no real gap: a sentence end always gets its pause, a comma only where the voice dips
             where = q * hop + hop // 2
@@ -248,23 +357,56 @@ def _pauses(audio: np.ndarray, timings) -> np.ndarray:
             audio = audio.copy()
             audio[where:where + fade] *= np.linspace(0, 1, fade, dtype=np.float32)
             parts += [head, np.zeros(int(want * SR), dtype=np.float32)]
+            inserts.append((where, int(want * SR)))
         else:
             continue
         cut = where
     return np.concatenate(parts + [audio[cut:]]) if parts else audio
 
 
-def _strip(audio: np.ndarray) -> np.ndarray:
-    """Cut the silence the model leaves before and after a unit, so pauses are exactly the ones we add."""
+def _strip(audio: np.ndarray):
+    """Cut the silence the model leaves before and after a unit, so pauses are exactly the ones we add.
+    Returns (audio, number of samples cut from the start)."""
     hop, n, rms = _frames(audio)
     loud = np.flatnonzero(rms > rms.max() * 0.01)
     if not len(loud):
-        return audio
-    return audio[max(loud[0] - 2, 0) * hop: min(loud[-1] + 4, n) * hop]
+        return audio, 0
+    start = max(loud[0] - 2, 0) * hop
+    return audio[start: min(loud[-1] + 4, n) * hop], start
 
 
-def render(k, text: str, style, pace: float = None, log: list = None) -> np.ndarray:
-    """Synthesize one unit at the target pace, with the comma and inner sentence pauses in place."""
+def _word_starts(timings) -> list:
+    """Start time (s) of every spoken word in a unit's phonemes: a word starts after a space."""
+    starts, new = [], True
+    for t in timings:
+        if t.phoneme == " ":
+            new = True
+        elif new and t.phoneme not in _MARKS:
+            starts.append(t.start)
+            new = False
+    return starts
+
+
+def _unit_word_times(text: str, timings, inserts, cut: int, length: int) -> list:
+    """When each word of `text` (split on spaces) starts in the finished unit audio, in seconds.
+    A written word can become several spoken ones ("q₀" -> "q zero"), so the spoken words are
+    shared out by what normalize() makes of each written word."""
+    spoken = _word_starts(timings)
+    counts = [len(normalize(w).split()) for w in text.split()]
+    total = sum(counts) or 1
+    out, done = [], 0
+    for c in counts:
+        i = min(int(round(done * len(spoken) / total)), len(spoken) - 1) if spoken else -1
+        p = int(spoken[i] * SR) if i >= 0 else 0
+        p += sum(n for at, n in inserts if at <= p) - cut
+        out.append(min(max(p, 0), length) / SR)
+        done += c
+    return out
+
+
+def render(k, text: str, style, pace: float = None, log: list = None, words: list = None) -> np.ndarray:
+    """Synthesize one unit at the target pace, with the comma and inner sentence pauses in place.
+    `words`, if given, receives the start time of every word of `text` in the returned audio."""
     if not k.has_timings:
         raise RuntimeError("This Kokoro model file reports no timings; use the one from release model-files-v1.1")
     pace = pace or PACE
@@ -291,7 +433,10 @@ def render(k, text: str, style, pace: float = None, log: list = None) -> np.ndar
         if any(abs(speed - t[0]) < 0.012 for t in tried):
             break
     speed, rate, audio, timings = min(tried, key=lambda t: abs(t[1] / pace - 1))
-    audio = _strip(_pauses(audio.astype(np.float32), timings))
+    inserts = []
+    audio, cut = _strip(_pauses(audio.astype(np.float32), timings, inserts))
+    if words is not None:
+        words += _unit_word_times(text, timings, inserts, cut, len(audio))
     PASSES[0] += 1
     PASSES[1] += len(tried)
     if log is not None:
@@ -300,25 +445,48 @@ def render(k, text: str, style, pace: float = None, log: list = None) -> np.ndar
     return audio
 
 
-def speak(k, script: str, style, pace: float = None, tail: bool = True, log: list = None):
+PAUSE = re.compile(r"\[pause\s+([\d.]+)\]")
+
+
+def speak(k, script: str, style, pace: float = None, tail: bool = True, log: list = None, bounds: list = None):
     """Render a script with [pause X] markers. Returns (samples, sample_rate).
 
     tail=True ends the clip with the pause its last mark calls for, so consecutive
     voiceover blocks in a video are spaced like sentences instead of running into each other.
+    `bounds`, if given, receives (character offset in `script`, seconds) for the start of every
+    word, plus the end of the script: what manim-voiceover needs for bookmarks.
     """
     silence = lambda t: np.zeros(int(SR * t), dtype=np.float32)
-    parts = re.split(r"\[pause\s+([\d.]+)\]", script)
-    audio = []
-    for i, part in enumerate(parts):
-        if i % 2 == 1:
-            audio.append(silence(float(part)))
-        elif part.strip():
-            us = units(part)
-            for j, unit in enumerate(us):
-                audio.append(render(k, unit, style, pace, log))
-                last = j == len(us) - 1 and not any(p.strip() for p in parts[i + 1:])
-                if tail or not last:
-                    audio.append(silence(end_pause(unit)))
+    pieces, pos = [], 0             # (text, offset of the text in script) and pause lengths
+    for m in PAUSE.finditer(script):
+        pieces += [(script[pos:m.start()], pos), float(m.group(1))]
+        pos = m.end()
+    pieces.append((script[pos:], pos))
+    audio, now = [], 0               # now: samples so far
+    for i, piece in enumerate(pieces):
+        if isinstance(piece, float):
+            audio.append(silence(piece))
+            now += len(audio[-1])
+            continue
+        part, off = piece
+        if not part.strip():
+            continue
+        spans = [off + m.start() for m in re.finditer(r"\S+", part)]
+        us = units(part)
+        for j, unit in enumerate(us):
+            times = []
+            audio.append(render(k, unit, style, pace, log, times))
+            if bounds is not None:
+                n = len(unit.split())
+                bounds += [(at, (now / SR) + t) for at, t in zip(spans[:n], times)]
+                spans = spans[n:]
+            now += len(audio[-1])
+            later = any(not isinstance(p, float) and p[0].strip() for p in pieces[i + 1:])
+            if tail or j < len(us) - 1 or later:
+                audio.append(silence(end_pause(unit)))
+                now += len(audio[-1])
+    if bounds is not None:
+        bounds.append((len(script), now / SR))
     return np.concatenate(audio), SR
 
 
@@ -358,7 +526,9 @@ def level(y: np.ndarray, target_db: float = -19.0) -> np.ndarray:
 # ---- Entry points ----
 def settings() -> str:
     """Everything that changes the audio; part of the cache key, so a changed setting re-renders."""
-    return repr((VOICE, STYLE_ROWS, PACE, CLAUSE_PAUSE, SENTENCE_PAUSE, QUESTION_PAUSE, WARM, sorted(CUSTOM.items())))
+    # the fingerprint of this file: any change to the voice code (a rule, a setting) re-makes the audio
+    code = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:12]
+    return repr((VOICE, STYLE_ROWS, PACE, CLAUSE_PAUSE, SENTENCE_PAUSE, QUESTION_PAUSE, WARM, sorted(CUSTOM.items()), code))
 
 
 def narrator(k, voice: str = None):
@@ -368,7 +538,7 @@ def narrator(k, voice: str = None):
     return np.repeat(row, len(pack), axis=0).astype(np.float32)
 
 
-def narrate(k, script: str):
-    """Render a script in the chosen voice. Returns (samples, sample_rate)."""
-    y, sr = speak(k, script, narrator(k))
+def narrate(k, script: str, bounds: list = None):
+    """Render a script in the chosen voice. Returns (samples, sample_rate); `bounds` as in speak()."""
+    y, sr = speak(k, script, narrator(k), bounds=bounds)
     return level(warm(y) if WARM else y), sr

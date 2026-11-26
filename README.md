@@ -3,7 +3,7 @@
 A Claude plugin that turns course material into narrated, animated explainer videos in the style of 3Blue1Brown.
 Claude writes the script, animates it with [Manim](https://www.manim.community/) and narrates it with
 [Kokoro](https://github.com/thewh1teagle/kokoro-onnx), a text-to-speech voice that runs locally. You get
-finished 720p MP4 files.
+finished 720p MP4 files with subtitles and chapters.
 
 It is made for studying. Point it at a lecture, a set of slides or just a topic, and it explains the
 definitions, constructions and proofs in the notation of your course. A big topic becomes a series of short
@@ -42,19 +42,23 @@ The computing part takes about one minute per minute of video, measured on the 2
 workspace. The time Claude needs to write the script and the animation comes on top of that. The first video
 of a session takes a few minutes longer, because the tools are installed first.
 
-Claude cannot hear the narration. If a word sounds wrong, tell Claude which word, and it fixes the
-pronunciation.
+Claude cannot hear the narration, so a local speech recognizer listens back to it and flags words that came
+out wrong, which Claude fixes before the final render. If a word still sounds wrong, tell Claude which word,
+and it fixes the pronunciation.
 
 ## What is in the plugin
 
 | Path | What it is |
 |---|---|
 | `skills/explainer-video/SKILL.md` | The instructions Claude follows: finding the material, planning the series, writing the script, building, checking and rendering the video. |
-| `skills/explainer-video/scripts/setup.sh` | Sets up a working folder: copies the code below into it, installs the tools and downloads the voice model. Safe to run again. |
-| `skills/explainer-video/scripts/speech_text.py` | The narration voice: pronunciation of math notation, one fixed voice, an even pace, pauses by rule, a warmer sound. All settings are at the top. |
-| `skills/explainer-video/scripts/kokoro_service.py` | Connects that voice to manim-voiceover and caches the audio. |
-| `skills/explainer-video/scripts/prenarrate.py` | Generates the narration of a script ahead of the render and prints the length of each part. |
-| `skills/explainer-video/scripts/explainer_lib.py` | Scene base class, an automatic layout check, contact sheets of the draft, and text and automata helpers. |
+| `skills/explainer-video/references/` | Details Claude reads only when needed: the scene helpers, the voice, and how to publish a change. |
+| `skills/explainer-video/scripts/setup.sh` | Sets up a working folder: copies the code below into it, installs the tools at tested versions and downloads the models. Safe to run again. |
+| `skills/explainer-video/scripts/speech_text.py` | The narration voice: pronunciation of math notation, one fixed voice, an even pace, pauses by rule, a warmer sound, and when every word is spoken. All settings are at the top. |
+| `skills/explainer-video/scripts/kokoro_service.py` | Connects that voice to manim-voiceover, caches the audio and reports word timings, so animations can land on a word. |
+| `skills/explainer-video/scripts/prenarrate.py` | Generates the narration of a script ahead of the render, prints the length of each part and its bookmarks, and runs the listen-back check. |
+| `skills/explainer-video/scripts/listen.py` | The listen-back check: transcribes the narration and reports words that sound different from the script. |
+| `skills/explainer-video/scripts/explainer_lib.py` | Scene base class (word-timed subtitles, chapters, camera), an automatic layout check, contact sheets of the draft, and helpers for formulas, automata, tapes, stacks, strings, tables and sets. |
+| `skills/explainer-video/scripts/finish.py` | Joins the rendered scenes into the final MP4 with a subtitle track and chapters. |
 | `setup.sh` | Sets up a clone of this repository in place, for use without the plugin system. |
 
 ## Requirements
@@ -65,7 +69,9 @@ as a normal user, without root, on Linux, which is how Claude Code runs on your 
 the Python packages into a virtualenv in the working folder. If LaTeX or ffmpeg is missing, it tells you what
 to install yourself, because it never uses sudo. macOS and Windows are untested.
 
-Tested with manim 0.22.1, manim-voiceover 0.4.0, kokoro-onnx 0.6.1, misaki 0.7.4 and spaCy 3.8.
+Setup installs exactly the tested versions: manim 0.22.1, manim-voiceover 0.4.0, kokoro-onnx 0.6.1,
+onnxruntime 1.29.0, misaki 0.7.4, spaCy 3.8.18, sherpa-onnx 2.0.3. A new release of any of them cannot break the
+plugin; updating them is a deliberate change in `setup.sh`.
 
 ## What setup installs and downloads
 
@@ -73,12 +79,16 @@ Tested with manim 0.22.1, manim-voiceover 0.4.0, kokoro-onnx 0.6.1, misaki 0.7.4
 
 - With apt, only when it runs as root on Debian or Ubuntu (as in Claude's cloud workspace):
   `libpango1.0-dev pkg-config dvisvgm texlive-latex-extra texlive-fonts-recommended sox espeak-ng ffmpeg`.
-- With pip, from PyPI: `manim`, `manim-voiceover`, `kokoro-onnx`, `soundfile`, `num2words`, `spacy`, `misaki`.
+- With pip, from PyPI, at pinned versions: `manim`, `manim-voiceover`, `kokoro-onnx`, `onnxruntime`, `soundfile`,
+  `num2words`, `spacy`, `misaki`, `sherpa-onnx`.
 - The spaCy English model `en_core_web_sm` 3.8.0, from the
   [spacy-models release](https://github.com/explosion/spacy-models/releases/tag/en_core_web_sm-3.8.0) on GitHub.
 - The Kokoro v1.0 voice model and voices (about 350 MB), from the
   [kokoro-onnx release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1) on GitHub.
   Both files are checked against SHA-256 checksums that are written in the script.
+- The Moonshine base speech recognizer for the listen-back check (about 250 MB), from the
+  [sherpa-onnx release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) on GitHub, also checked
+  against a SHA-256 checksum. Without it, everything else still works.
 
 Where the Python packages go: system-wide when setup runs as root (that is meant for a disposable container),
 otherwise into the virtualenv that is active, or into a new `.venv` in the working folder.
@@ -111,5 +121,6 @@ MIT, see [LICENSE](LICENSE).
 This project is not affiliated with or endorsed by 3Blue1Brown. It builds on
 [Manim Community](https://www.manim.community/) (MIT), [manim-voiceover](https://github.com/ManimCommunity/manim-voiceover) (MIT),
 [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) (MIT) with the Kokoro-82M model (Apache 2.0),
-[misaki](https://github.com/hexgrad/misaki) (Apache 2.0) and [spaCy](https://spacy.io/) (MIT). None of them is
+[misaki](https://github.com/hexgrad/misaki) (Apache 2.0), [spaCy](https://spacy.io/) (MIT), and
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache 2.0) with the Moonshine model (MIT). None of them is
 included in this repository; setup downloads them.
