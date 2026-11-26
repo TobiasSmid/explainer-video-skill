@@ -59,6 +59,11 @@ def transcribe(path) -> str:
         x = x.mean(1)
     rec, out = _recognizer(), []
     for piece in _chunks(x, sr):
+        loud = np.flatnonzero(np.abs(piece) > 0.02)
+        if not len(loud):
+            continue
+        # Moonshine returns nothing for a piece that starts with a long silence (a [pause] marker): trim it
+        piece = piece[max(loud[0] - sr // 10, 0): loud[-1] + sr // 10]
         s = rec.create_stream()
         s.accept_waveform(sr, piece)
         rec.decode_stream(s)

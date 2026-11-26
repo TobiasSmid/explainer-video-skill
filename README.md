@@ -53,7 +53,7 @@ and it fixes the pronunciation.
 | `skills/explainer-video/SKILL.md` | The instructions Claude follows: finding the material, planning the series, writing the script, building, checking and rendering the video. |
 | `skills/explainer-video/references/` | Details Claude reads only when needed: the scene helpers, the voice, and how to publish a change. |
 | `skills/explainer-video/scripts/setup.sh` | Sets up a working folder: copies the code below into it, installs the tools at tested versions and downloads the models. Safe to run again. |
-| `skills/explainer-video/scripts/speech_text.py` | The narration voice: pronunciation of math notation, one fixed voice, an even pace, pauses by rule, a warmer sound, and when every word is spoken. All settings are at the top. |
+| `skills/explainer-video/scripts/speech_text.py` | The narration voice: plain Kokoro in one reading per block, with its own speed and pause settings; this file only prepares the text (math notation, pronunciation) and reports when every word is spoken. All settings are at the top. |
 | `skills/explainer-video/scripts/kokoro_service.py` | Connects that voice to manim-voiceover, caches the audio and reports word timings, so animations can land on a word. |
 | `skills/explainer-video/scripts/prenarrate.py` | Generates the narration of a script ahead of the render, prints the length of each part and its bookmarks, and runs the listen-back check. |
 | `skills/explainer-video/scripts/listen.py` | The listen-back check: transcribes the narration and reports words that sound different from the script. |
@@ -110,7 +110,7 @@ otherwise into the virtualenv that is active, or into a new `.venv` in the worki
 ## Changing the voice
 
 Ask Claude ("make the voice calmer", "let me hear a few other voices"). The settings are at the top of
-`speech_text.py`: `VOICE`, `PACE`, the pauses and `WARM`, and mispronounced words go into `CUSTOM`. A change
+`speech_text.py`: `VOICE`, `SPEED` and the pauses (all Kokoro's own settings), and mispronounced words go into `CUSTOM`. A change
 holds for the session you make it in. Only the owner of this repository can make a change permanent, by
 pushing it here; everyone who installed the plugin then gets it at their next sync.
 

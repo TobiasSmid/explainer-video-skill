@@ -1,26 +1,26 @@
-"""Turn narration with math notation into calm, even, natural Kokoro speech.
+"""Narration: plain Kokoro, fed the right text.
+
+Kokoro makes all the audio itself, in ONE reading per narration block, with its own pause and speed
+settings. Nothing is cut, re-rendered or post-processed: every attempt to do that (fixed or averaged
+voice styles, per-sentence pace matching, pauses cut into the audio, sentence-by-sentence synthesis,
+EQ) caused audible artifacts ("trick-eeh" tails, creaking, pitch jumps, nasal moments). The skill only
+decides what TEXT goes in:
+  - the math reading rules (normalize): A ∪ B -> "A union B", aⁿbⁿ -> "a to the n b to the n", ...
+  - pronunciation from misaki, Kokoro's own dictionary, with letter names forced where needed
+  - a dash after every sentence. Inside one reading Kokoro leaves almost no silence at a full stop
+    (it was trained on single sentences); after ". —" it leaves a small gap, which Kokoro's own pause
+    setting (sentence_pause) stretches into a real pause. Without the dash some sentence ends got none.
 
 Script conventions:
-  - Write math as you would on a slide: A ∪ B, ε-transition, q₀, δ(q, a), Σ*.
+  - Write math as you would on a slide: A ∪ B, ε-transition, q₀, δ(q, a), Σ*, aⁿbⁿ, |w|.
   - A standalone capital letter (A, B, D, L, N...) is read as a letter name ("ay", "bee").
-  - Use lowercase "a" for the article; avoid starting a sentence with the article "A".
-  - "[pause 0.8]" adds 0.8 seconds of extra silence between beats.
+  - Avoid starting a sentence with the article "A"; `abba` in backticks is spelled letter by letter.
+  - "[pause 0.8]" marks an extra pause; it becomes one more Kokoro sentence pause (the number is ignored).
   - Force a pronunciation with misaki's inline syntax: [Kleene](/klˈAni/), or add the word to CUSTOM.
-
-How it gets an even, human delivery (each point fixes a problem you can hear without it):
-  - Pronunciation: misaki's G2P (dictionary + part of speech), the phonemes Kokoro was trained on,
-    with the soft American t written as "T". ("ɾ" makes Kokoro roll an r: a foreign accent.)
-  - One voice: Kokoro picks a different voice style for every input length, which shifts pitch and
-    tone from one sentence to the next. narrator() uses one fixed style for everything.
-  - One pace: Kokoro talks faster the longer its input (a 3-word and a 30-word sentence differ by 40%).
-    Every unit is measured with the model's own timings and re-rendered at the speed that hits PACE.
-  - Pauses by rule: commas, sentence ends, questions and the end of every clip get a set silence,
-    spliced into the gap the model already left, so sentences stay in one piece.
 Needs the Kokoro export that reports timings (release "model-files-v1.1") and kokoro-onnx >= 0.6.
 """
 import hashlib
 import re
-import subprocess
 import warnings
 from pathlib import Path
 
@@ -28,15 +28,15 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 
-# ---- The narration voice ----
-VOICE = "am_puck"        # ONE Kokoro voice. Never blend voices: blends sound unstable.
+# ---- The narration voice (all of it is Kokoro's own settings) ----
+VOICE = "am_puck"        # the stock Kokoro voice, used as is
 BRITISH = VOICE[0] == "b"  # a British voice (bm_/bf_) needs British sounds instead of American ones
-PACE = 19.5              # speaking rate in sounds per second (about 140 words/min with pauses). Lower = calmer.
-CLAUSE_PAUSE = 0.20      # after , ; :
-SENTENCE_PAUSE = 0.50    # after . !
-QUESTION_PAUSE = 0.70    # after ?  (a question gets a moment to land)
-WARM = True              # warmer, softer sound (EQ + gentle compression); False = Kokoro's plain output
-STYLE_ROWS = (100, 160)  # the voice style Kokoro uses for a normal-length sentence, used for everything
+SPEED = 0.85             # Kokoro's speed setting, chosen by ear: ~17 sounds/s in block-sized readings,
+                         # about 130 words per minute with the pauses. Kokoro speaks faster the longer its
+                         # input, so this value is for blocks of 2-5 sentences, not for one long text.
+SENTENCE_PAUSE = 0.5     # Kokoro's own pause after . ? ! (it only lengthens a gap Kokoro left itself)
+CLAUSE_PAUSE = 0.15      # Kokoro's own pause after , ; : where it left a gap
+END_PAUSE = 0.5          # silence after every narration block, so blocks are spaced like sentences
 
 SR = 24000
 _SUB = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
@@ -72,6 +72,7 @@ LETTER_PH = {"A": "ˈA", "B": "bˈi", "C": "sˈi", "D": "dˈi", "E": "ˈi", "F":
 # Words misaki gets wrong for course material; add one here whenever the user flags a word.
 CUSTOM = {
     "Kleene": "klˈAni",
+    "pushdown": "pˈʊʃdˌWn",
 }
 
 
@@ -221,162 +222,23 @@ def to_phonemes(k, text: str) -> str:
     return ps
 
 
-# ---- Pacing ----
-PACE_TOLERANCE = 0.05  # a unit within 5% of PACE is accepted
-PASSES = [0, 0]        # units rendered, synthesis passes made (for timing reports)
-GAMMA = 0.8            # Kokoro's speaking rate grows roughly like speed ** 0.8
-_CAL = [None]          # learned ratio between this voice's real rate and _model_rate()
-LONG_SENTENCE = 20     # words; a sentence at least this long gets LONG_BONUS extra silence after it
-LONG_BONUS = 0.10
-MIN_UNIT_WORDS = 5     # a shorter sentence is spoken together with its neighbour
-MAX_UNIT_WORDS = 32    # a longer sentence is split at a comma
-BREATH_RUN = 16        # words without punctuation before a breath comma is added
-BREATH_WORDS = {"and", "but", "because", "which", "when", "whenever", "while", "where",
-                "without", "if", "then", "until", "since", "whereas", "unless"}
-_SILENT = set(" ,.;:!?—ˈˌ")
-_MARKS = ",;:—.!?"
+# ---- Speech ----
+PASSES = [0, 0]          # readings made, sentences in them (for timing reports)
+_MARKS = ",;:—.!?…"
+PAUSE = re.compile(r"\[pause\s+([\d.]+)\]")
 
 
-def _breathe(sentence: str) -> str:
-    """Add a comma before a conjunction in a long run with no punctuation, so the narrator can breathe."""
-    out = []
-    for piece in re.split(r"(?<=[,;:—])\s+", sentence):
-        words = piece.split()
-        while len(words) > BREATH_RUN:
-            cands = [i for i in range(6, len(words) - 4) if words[i].lower() in BREATH_WORDS]
-            if not cands:
-                break
-            i = min(cands, key=lambda c: abs(c - len(words) / 2))
-            out.append(" ".join(words[:i]) + ",")
-            words = words[i:]
-        out.append(" ".join(words))
-    return " ".join(out)
-
-
-def units(part: str):
-    """Split a beat into the pieces that are synthesized in one go: whole sentences."""
-    sents = [_breathe(x) for x in re.split(r"(?<=[.?!])\s+", part.strip()) if x.strip()]
-    out = []
-    for sent in sents:
-        words = sent.split()
-        while len(words) > MAX_UNIT_WORDS:  # split an overlong sentence at the comma nearest the middle
-            cands = [i for i in range(6, len(words) - 5) if words[i - 1][-1] in ",;:"]
-            if not cands:
-                break
-            i = min(cands, key=lambda c: abs(c - len(words) / 2))
-            out.append(" ".join(words[:i]))
-            words = words[i:]
-        out.append(" ".join(words))
-    i = 0
-    while i < len(out) and len(out) > 1:  # glue short sentences: alone they come out slow and odd
-        if len(out[i].split()) < MIN_UNIT_WORDS:
-            j = i + 1 if i + 1 < len(out) else i - 1
-            lo, hi = min(i, j), max(i, j)
-            if len(out[lo].split()) + len(out[hi].split()) <= MAX_UNIT_WORDS:
-                out[lo:hi + 1] = [out[lo] + " " + out[hi]]
-                i = lo
-                continue
-        i += 1
-    return out
-
-
-def end_pause(unit: str) -> float:
-    """Silence after a unit, from how it ends and how long its last sentence was."""
-    last = re.split(r"(?<=[.?!])\s+", unit.strip())[-1]
-    mark = unit.strip()[-1]
-    p = QUESTION_PAUSE if mark == "?" else SENTENCE_PAUSE if mark in ".!" else CLAUSE_PAUSE
-    return p + (LONG_BONUS if mark in ".?!" and len(last.split()) >= LONG_SENTENCE else 0.0)
-
-
-def _rate(timings) -> float:
-    """Sounds per second. The sound right before a mark is left out: it carries the model's own pause."""
-    keep = []
-    for i, t in enumerate(timings):
-        if t.phoneme in _SILENT:
-            continue
-        nxt = next((u.phoneme for u in timings[i + 1:] if u.phoneme not in "ˈˌ"), ".")
-        if nxt not in _MARKS:
-            keep.append(t.end - t.start)
-    return len(keep) / max(sum(keep), 0.05)
-
-
-def _model_rate(n: int, speed: float) -> float:
-    """Kokoro's natural rate for n input tokens: it talks faster the longer the input."""
-    return (4.6 * np.log(max(n, 8)) - 1.0) * (speed / 0.9) ** GAMMA
-
-
-def _frames(audio: np.ndarray):
-    hop = SR // 100
-    n = len(audio) // hop
-    return hop, n, np.sqrt((audio[: n * hop].reshape(n, hop) ** 2).mean(1) + 1e-12)
-
-
-def _pauses(audio: np.ndarray, timings, inserts: list = None) -> np.ndarray:
-    """Set the silence after every comma and inner sentence end, using the model's timings.
-
-    Where the model left a gap, silence is added in the middle of that gap up to the target.
-    Where it ran straight through a sentence end, the audio is cut at the quietest point near
-    the mark (with short fades) so the sentence still gets its pause. The final mark is left
-    to the caller, which adds the end-of-unit pause. `inserts` collects (sample, length) of
-    every silence added, so word times can be moved along with the audio.
-    """
-    inserts = [] if inserts is None else inserts
-    hop, n, rms = _frames(audio)
-    quiet = rms <= rms.max() * 0.01
-    marks = [t for t in timings if t.phoneme in _MARKS]
-    last = max((i for i, t in enumerate(timings) if t.phoneme not in " ˈˌ"), default=-1)
-    if last >= 0 and timings[last].phoneme in _MARKS:
-        marks = [t for t in marks if t is not timings[last]]
-    parts, cut = [], 0
-    fade = int(SR * 0.008)
-    for t in marks:
-        want = SENTENCE_PAUSE if t.phoneme in ".!?" else CLAUSE_PAUSE
-        at = int(t.end * 100)
-        lo, hi = max(at - 15, 0), min(at + 15, n - 1)
-        if hi <= lo:
-            continue
-        q = lo + int(np.argmin(rms[lo:hi + 1]))            # quietest 10 ms near the mark
-        if quiet[q]:                                       # the model paused here: lengthen its gap
-            i, j = q, q
-            while i > 0 and quiet[i - 1]:
-                i -= 1
-            while j + 1 < n and quiet[j + 1]:
-                j += 1
-            missing, where = want - (j - i + 1) * 0.01, (i + j + 1) // 2 * hop
-            if missing <= 0 or where <= cut:
-                continue
-            parts += [audio[cut:where], np.zeros(int(missing * SR), dtype=np.float32)]
-            inserts.append((where, int(missing * SR)))
-        elif t.phoneme in ".!?" or rms[q] <= rms.max() * 0.05:
-            # no real gap: a sentence end always gets its pause, a comma only where the voice dips
-            where = q * hop + hop // 2
-            if where - fade <= cut or where + fade >= len(audio):
-                continue
-            head = audio[cut:where].copy()
-            head[-fade:] *= np.linspace(1, 0, fade, dtype=np.float32)
-            audio = audio.copy()
-            audio[where:where + fade] *= np.linspace(0, 1, fade, dtype=np.float32)
-            parts += [head, np.zeros(int(want * SR), dtype=np.float32)]
-            inserts.append((where, int(want * SR)))
-        else:
-            continue
-        cut = where
-    return np.concatenate(parts + [audio[cut:]]) if parts else audio
-
-
-def _strip(audio: np.ndarray):
-    """Cut the silence the model leaves before and after a unit, so pauses are exactly the ones we add.
-    Returns (audio, number of samples cut from the start)."""
-    hop, n, rms = _frames(audio)
-    loud = np.flatnonzero(rms > rms.max() * 0.01)
-    if not len(loud):
-        return audio, 0
-    start = max(loud[0] - 2, 0) * hop
-    return audio[start: min(loud[-1] + 4, n) * hop], start
+def to_kokoro(k, script: str) -> str:
+    """The phonemes Kokoro reads for one block: every sentence through the text rules, joined with
+    a dash after each sentence end, so Kokoro leaves a gap its pause setting can lengthen."""
+    script = PAUSE.sub(" — ", script)
+    pieces = [x.strip(" —") for x in re.split(r"(?<=[.?!])\s+|\s+—\s+", script.strip()) if x.strip(" —")]
+    PASSES[1] += len(pieces)
+    return " — ".join(to_phonemes(k, x) for x in pieces)
 
 
 def _word_starts(timings) -> list:
-    """Start time (s) of every spoken word in a unit's phonemes: a word starts after a space."""
+    """Start time (s) of every spoken word in Kokoro's timings: a word starts after a space."""
     starts, new = [], True
     for t in timings:
         if t.phoneme == " ":
@@ -387,158 +249,29 @@ def _word_starts(timings) -> list:
     return starts
 
 
-def _unit_word_times(text: str, timings, inserts, cut: int, length: int) -> list:
-    """When each word of `text` (split on spaces) starts in the finished unit audio, in seconds.
-    A written word can become several spoken ones ("q₀" -> "q zero"), so the spoken words are
-    shared out by what normalize() makes of each written word."""
-    spoken = _word_starts(timings)
-    counts = [len(normalize(w).split()) for w in text.split()]
-    total = sum(counts) or 1
-    out, done = [], 0
-    for c in counts:
-        i = min(int(round(done * len(spoken) / total)), len(spoken) - 1) if spoken else -1
-        p = int(spoken[i] * SR) if i >= 0 else 0
-        p += sum(n for at, n in inserts if at <= p) - cut
-        out.append(min(max(p, 0), length) / SR)
-        done += c
-    return out
-
-
-def render(k, text: str, style, pace: float = None, log: list = None, words: list = None) -> np.ndarray:
-    """Synthesize one unit at the target pace, with the comma and inner sentence pauses in place.
-    `words`, if given, receives the start time of every word of `text` in the returned audio."""
-    if not k.has_timings:
-        raise RuntimeError("This Kokoro model file reports no timings; use the one from release model-files-v1.1")
-    pace = pace or PACE
-    ps = to_phonemes(k, text)
-    # First guess from the length model, corrected by what earlier units of this voice measured.
-    speed = float(np.clip(0.9 * (pace / ((_CAL[0] or 1.0) * _model_rate(len(ps), 0.9))) ** (1 / GAMMA), 0.55, 1.05))
-    kw = dict(voice=style, is_phonemes=True, sentence_pause=0, clause_pause=0)  # pauses: see _pauses
-    tried = []
-    for _ in range(4):
-        audio, _, timings = k.create_timed(ps, speed=speed, **kw)
-        rate = _rate(timings)
-        tried.append((speed, rate, audio, timings))
-        seen = rate / _model_rate(len(ps), speed)
-        _CAL[0] = seen if _CAL[0] is None else 0.6 * _CAL[0] + 0.4 * seen
-        if abs(rate / pace - 1) <= PACE_TOLERANCE:
-            break
-        lo = max((t for t in tried if t[1] < pace), key=lambda t: t[1], default=None)
-        hi = min((t for t in tried if t[1] > pace), key=lambda t: t[1], default=None)
-        if lo and hi:   # the pace we want lies between two tries: aim in between
-            speed = lo[0] + (hi[0] - lo[0]) * (pace - lo[1]) / (hi[1] - lo[1])
-        else:
-            speed = speed * (pace / rate) ** (1 / GAMMA)
-        speed = float(np.clip(speed, 0.55, 1.05))
-        if any(abs(speed - t[0]) < 0.012 for t in tried):
-            break
-    speed, rate, audio, timings = min(tried, key=lambda t: abs(t[1] / pace - 1))
-    inserts = []
-    audio, cut = _strip(_pauses(audio.astype(np.float32), timings, inserts))
-    if words is not None:
-        words += _unit_word_times(text, timings, inserts, cut, len(audio))
-    PASSES[0] += 1
-    PASSES[1] += len(tried)
-    if log is not None:
-        log.append({"text": text, "speed": round(speed, 2), "rate": round(rate, 1),
-                    "seconds": round(len(audio) / SR, 2), "tries": len(tried)})
-    return audio
-
-
-PAUSE = re.compile(r"\[pause\s+([\d.]+)\]")
-
-
-def speak(k, script: str, style, pace: float = None, tail: bool = True, log: list = None, bounds: list = None):
-    """Render a script with [pause X] markers. Returns (samples, sample_rate).
-
-    tail=True ends the clip with the pause its last mark calls for, so consecutive
-    voiceover blocks in a video are spaced like sentences instead of running into each other.
-    `bounds`, if given, receives (character offset in `script`, seconds) for the start of every
-    word, plus the end of the script: what manim-voiceover needs for bookmarks.
-    """
-    silence = lambda t: np.zeros(int(SR * t), dtype=np.float32)
-    pieces, pos = [], 0             # (text, offset of the text in script) and pause lengths
-    for m in PAUSE.finditer(script):
-        pieces += [(script[pos:m.start()], pos), float(m.group(1))]
-        pos = m.end()
-    pieces.append((script[pos:], pos))
-    audio, now = [], 0               # now: samples so far
-    for i, piece in enumerate(pieces):
-        if isinstance(piece, float):
-            audio.append(silence(piece))
-            now += len(audio[-1])
-            continue
-        part, off = piece
-        if not part.strip():
-            continue
-        spans = [off + m.start() for m in re.finditer(r"\S+", part)]
-        us = units(part)
-        for j, unit in enumerate(us):
-            times = []
-            audio.append(render(k, unit, style, pace, log, times))
-            if bounds is not None:
-                n = len(unit.split())
-                bounds += [(at, (now / SR) + t) for at, t in zip(spans[:n], times)]
-                spans = spans[n:]
-            now += len(audio[-1])
-            later = any(not isinstance(p, float) and p[0].strip() for p in pieces[i + 1:])
-            if tail or j < len(us) - 1 or later:
-                audio.append(silence(end_pause(unit)))
-                now += len(audio[-1])
-    if bounds is not None:
-        bounds.append((len(script), now / SR))
-    return np.concatenate(audio), SR
-
-
-# ---- Sound ----
-WARM_CHAIN = ",".join([
-    "highpass=f=60",
-    "equalizer=f=150:t=q:w=0.9:g=2.5",     # body / warmth
-    "equalizer=f=3300:t=q:w=1.3:g=-2.5",   # soften the hard "digital" presence peak
-    "deesser=i=0.35",
-    "lowpass=f=10500",                     # hide vocoder fizz
-    "acompressor=threshold=-24dB:ratio=2:attack=15:release=200:makeup=1.5",
-    "aecho=0.9:0.9:23|41:0.06|0.04",       # a hint of room, not a hall
-])
-
-
-def warm(samples: np.ndarray) -> np.ndarray:
-    out = subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-f", "f32le", "-ar", str(SR), "-ac", "1", "-i", "-",
-         "-af", WARM_CHAIN, "-f", "f32le", "-ar", str(SR), "-ac", "1", "-"],
-        input=samples.astype(np.float32).tobytes(), capture_output=True, check=True)
-    y = np.frombuffer(out.stdout, dtype=np.float32).copy()
-    return y[:len(samples)] if len(y) >= len(samples) else np.pad(y, (0, len(samples) - len(y)))
-
-
-def level(y: np.ndarray, target_db: float = -19.0) -> np.ndarray:
-    """Same loudness for every clip: speech RMS to target_db, peaks kept under -1 dBFS."""
-    frames = y[: len(y) // 480 * 480].reshape(-1, 480)
-    rms = np.sqrt((frames ** 2).mean(axis=1) + 1e-12)
-    voiced = rms[rms > rms.max() * 0.05]
-    if not len(voiced):
-        return y
-    y = y * (10 ** (target_db / 20) / np.sqrt((voiced ** 2).mean()))
-    peak = np.abs(y).max()
-    return y * (0.89 / peak) if peak > 0.89 else y
-
-
-# ---- Entry points ----
-def settings() -> str:
-    """Everything that changes the audio; part of the cache key, so a changed setting re-renders."""
-    # the fingerprint of this file: any change to the voice code (a rule, a setting) re-makes the audio
-    code = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:12]
-    return repr((VOICE, STYLE_ROWS, PACE, CLAUSE_PAUSE, SENTENCE_PAUSE, QUESTION_PAUSE, WARM, sorted(CUSTOM.items()), code))
-
-
-def narrator(k, voice: str = None):
-    """One fixed voice style (510 identical rows), so pitch and tone don't change with sentence length."""
-    pack = k.get_voice_style(voice or VOICE)
-    row = pack[STYLE_ROWS[0]:STYLE_ROWS[1]].mean(axis=0, keepdims=True)
-    return np.repeat(row, len(pack), axis=0).astype(np.float32)
-
-
 def narrate(k, script: str, bounds: list = None):
-    """Render a script in the chosen voice. Returns (samples, sample_rate); `bounds` as in speak()."""
-    y, sr = speak(k, script, narrator(k), bounds=bounds)
-    return level(warm(y) if WARM else y), sr
+    """One narration block in one Kokoro reading. Returns (samples, sample_rate).
+    `bounds`, if given, receives (character offset in `script`, seconds) for the start of every
+    word, plus the end of the script: what manim-voiceover needs for bookmarks and subtitles."""
+    samples, sr, timings = k.create_timed(to_kokoro(k, script), voice=VOICE, speed=SPEED, is_phonemes=True,
+                                          sentence_pause=SENTENCE_PAUSE, clause_pause=CLAUSE_PAUSE)
+    PASSES[0] += 1
+    samples = np.concatenate([samples.astype(np.float32), np.zeros(int(sr * END_PAUSE), np.float32)])
+    if bounds is not None:
+        # written words -> spoken words: "q₀" is two spoken words, a [pause] marker none
+        spans = [(m.start(), m.group()) for m in re.finditer(r"\S+", PAUSE.sub(lambda m: " " * len(m.group()), script))]
+        counts = [len(normalize(w).split()) for _, w in spans]
+        spoken, total, done = _word_starts(timings), sum(counts) or 1, 0
+        for (at, _), c in zip(spans, counts):
+            i = min(int(round(done * len(spoken) / total)), len(spoken) - 1) if spoken else -1
+            bounds.append((at, spoken[i] if i >= 0 else 0.0))
+            done += c
+        bounds.append((len(script), len(samples) / sr))
+    return samples, sr
+
+
+def settings() -> str:
+    """Everything that changes the audio; part of the cache key, so a change re-makes the audio.
+    The fingerprint of this file covers every rule; the rest covers the settings above."""
+    code = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:12]
+    return repr((VOICE, SPEED, SENTENCE_PAUSE, CLAUSE_PAUSE, END_PAUSE, sorted(CUSTOM.items()), code))

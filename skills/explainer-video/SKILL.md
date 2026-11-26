@@ -14,7 +14,7 @@ You deliver finished 720p MP4s with 3Blue1Brown-style animation, a narrated voic
 
 Set up a task list if the session has one: find material, plan the split, set up tools, then one task per
 video (script, scene, draft + check, final render, deliver). Give a time estimate: per minute of finished
-video about 30 s of narration, 10 s of draft and 15 s of final render (2 cores), plus writing time.
+video about 25 s of narration, 10 s of draft and 15 s of final render (2 cores), plus writing time.
 When making more than one video, ALWAYS use the pipeline of section 9: the user starts watching video 1
 while the next ones are still being made.
 
@@ -111,15 +111,19 @@ definition and notation the video uses.
 Voice: calm, curious, second person ("let's", "you"), question before answer, short sentences. The narration
 carries the explanation; the screen shows objects and formulas, no walls of text.
 
-Writing for the voice (it reads exactly what you write):
+Writing for the voice (it reads exactly what you write; each beat is one Kokoro reading):
+- Every beat has 2-5 sentences. Never a beat of one short sentence: Kokoro rushes very short input. Join it
+  with the beat before or after (use a bookmark if an animation must wait for it).
 - Math as on slides: "A ∪ B", "ε-transition", "q₀", "Σ*", "aⁿbⁿ", "a^{n+1}", "|w| ≥ p", "w^R", "δ(q, a)",
   "q′", "⊇", "Γ". The normalizer turns them into words.
 - Capital letters are read as letter names; "D sub A" or "D_A" both work. Letter strings: "xyz" and "xy^iz"
   are spelled; for anything else use backticks: `abba`, `0110`.
 - The lowercase letter a: write it where the article is impossible ("an a", "every a it reads", "a b c",
   formulas) or in backticks. Never start a sentence with the article "A"; use "One ...", "This ...".
-- Punctuation sets the pauses: a comma where the narrator breathes, a question mark on real questions. Every
-  sentence already gets its pause; use `[pause 0.3]` only for the extra beat before a reveal. No ellipses.
+- Punctuation sets the pauses: Kokoro pauses after every sentence and briefly at commas, so short sentences
+  give a calm rhythm. A question mark on real questions. `[pause 0.3]` adds one more sentence-length pause
+  (the number is ignored), e.g. before a reveal. No ellipses. Never add audio tricks to change the voice:
+  references/voice.md says why.
 - Bookmarks for exact timing: `... we take the <bookmark mark='u'/>union ...` (section 5).
 
 ## 5. Build the manim scene

@@ -53,9 +53,9 @@ for key, text in beats.items():
     total += secs
     marks = "  ".join(f"@{m} {t:.1f}s" for m, t in bookmark_times(data).items())
     print(f"{key:28} {secs:5.1f}s  {marks}".rstrip(), flush=True)
-units, passes = speech_text.PASSES
+readings, sentences = speech_text.PASSES
 print(f"TOTAL {total:.0f}s of narration; {made} new beats made in {time.time() - start:.0f}s "
-      f"({units} sentences, {passes} synthesis passes)", flush=True)
+      f"({sentences} sentences in {readings} Kokoro readings)", flush=True)
 
 if listen_back and new:
     import listen

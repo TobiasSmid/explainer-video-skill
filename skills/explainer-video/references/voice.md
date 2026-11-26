@@ -1,45 +1,37 @@
 # The voice: how it works, and how to fix or change it
 
-Read this when the user flags a word, asks about the voice, or wants it changed. Everything below lives in
+Read this when the user flags a word, asks about the voice, or wants it changed. Everything lives in
 `speech_text.py` (settings at the top); cached audio is re-made automatically after any change to that file.
 
-## The setup (do not change it unless asked)
-Kokoro, the single voice am_puck (never a blend of voices), at a slightly lively pace (PACE 19.5, about 140
-words per minute including pauses), with the warmer sound on (WARM = True). Pauses follow rules: about 0.2 s at
-a comma, 0.5 s after a sentence, 0.7 s after a question, and the same pause at the end of every voiceover
-block.
+## The setup: plain Kokoro, fed the right text (do not add audio processing)
+Each narration block is ONE Kokoro reading: the stock voice am_puck, Kokoro's speed setting (SPEED 0.85,
+about 130 words per minute with pauses) and Kokoro's own pause setting (0.5 s at a sentence end, 0.15 s at
+a comma, only where Kokoro left a gap itself), plus 0.5 s of silence after the block. Nothing is cut,
+re-rendered or post-processed. The skill only decides the TEXT that goes in:
+- normalize(): math as words (A ∪ B -> "A union B", aⁿbⁿ -> "a to the n b to the n", |w|, q₀, δ(q, a), ...),
+  letter names where an article is impossible ("an a", "a b c"), a lone "x" kept (misaki drops it).
+- misaki, Kokoro's own pronunciation dictionary, with the soft American t written "T" ("ɾ" makes Kokoro
+  roll an r: "automatar").
+- a dash after every sentence (". —"): inside one reading Kokoro leaves almost no silence at a full stop,
+  but after a dash it leaves a small gap that its pause setting stretches into a real pause.
 
-Why each piece exists (each one fixes a problem that listeners noticed; do not undo the fixes):
-- Pronunciation comes from misaki, Kokoro's own G2P. Raw espeak phonemes (kokoro-onnx's default) stress
-  words wrongly ("automata") and sound more artificial.
-- misaki writes the soft American t as "ɾ"; Kokoro v1.0 needs "T". With "ɾ" it rolls an r, and "automata"
-  comes out as "automatar" with a foreign accent.
-- Kokoro picks a different voice style for every input length, so pitch and tone jump from one sentence
-  to the next ("nasal, then normal again"). narrator() uses one fixed style for everything.
-- Kokoro talks faster the longer its input, so long sentences sound rushed and short ones slow. render()
-  measures every unit with the model's timings and re-renders it until it hits PACE.
-- Pauses are spliced into the gaps the model already left, so sentences stay whole. Do not go back to
-  synthesizing sentences in pieces cut at commas.
-- Blended voices and the low-rated voices (am_liam, am_eric: grade D) sound unstable.
-- A lone "a" is read as the article "uh" and misaki drops a lone lowercase "x" entirely; normalize() forces
-  the letter names where the article is impossible ("an a", "every a it reads", "a b c", formulas).
-- Symbols like ∪ are silently dropped unless normalize() turns them into words (SYMBOLS).
-- The model reports when every sound is spoken; speak() turns that into word start times, which
-  kokoro_service.py hands to manim-voiceover for bookmarks and word-timed subtitles.
-
-Speed: narration takes about half a minute per minute of audio (Kokoro on all cores; render() learns the
-voice's natural rate as it goes, so most sentences need one synthesis pass).
+What was tried before and must not come back (each one was audible, the user rejected all of them):
+- fixed or averaged voice styles, steering the style vector: creaking "trick-eeh" tails at sentence ends;
+- synthesizing sentence by sentence: Kokoro picks its tone by input length, so pitch jumps and nasal moments;
+- per-sentence pace matching (re-rendering at different speeds), pauses cut into the audio ("tri... ck"),
+  a sentence plus the next word cut off, EQ/compression/echo: warping and an unnatural sound.
+Kokoro was trained on single utterances: it does not pause mid-reading, it ends an utterance with a
+drawn-out tail, and it rushes a very short input (one short sentence reads about 40% faster). Work with that (one reading per block, Kokoro's own pause and speed settings), not against it.
 
 ## Checking audio you cannot hear
 - prenarrate.py listens back to every new beat (listen.py: a local Moonshine recognizer) and prints
   `LISTEN key: said 'X', heard 'Y'` for stretches that sound different from the script. Spelling-only
-  differences (their/there, Q0/q zero) are already filtered out. A flag is a hint, not proof: the recognizer
-  also stumbles on rare words. Words in CUSTOM are never flagged.
-- For a flagged stretch: print its phonemes,
-  `python3 -c "import speech_text as s; from kokoro_service import _engine; print(s.to_phonemes(_engine(), 'the phrase'))"`.
-  Empty or odd phonemes mean a normalizer or dictionary problem: add a SYMBOLS rule (a symbol), a CUSTOM
-  entry (a mangled word), or reword the beat. Fine phonemes usually mean the recognizer misheard: move on.
-- Pass `log=[]` to speak() for the pace of every unit; measure silences in the output with numpy.
+  differences (their/there, Q0/q zero) are filtered out. A flag is a hint: the recognizer also stumbles on
+  rare words. Words in CUSTOM are never flagged. It checks WORDS only, not how smooth the voice sounds.
+- For a flagged stretch, print what Kokoro is given:
+  `python3 -c "import speech_text as s; from kokoro_service import _engine; print(s.to_kokoro(_engine(), 'the phrase'))"`.
+  Missing or odd phonemes mean a text problem: add a SYMBOLS rule (a symbol), a CUSTOM entry (a mangled
+  word), or reword the beat. Fine phonemes usually mean the recognizer misheard: move on.
 - Ask the user to name the second where something sounds off.
 
 ## Fixing a word the user flags
@@ -47,10 +39,9 @@ Add it to CUSTOM in speech_text.py (misaki phonemes, e.g. `"Kleene": "klˈAni"`)
 affected beats are re-made), and publish the change (references/publishing.md) so it stays fixed.
 Inline alternatives in a beat: `[Kleene](/klˈAni/)`; backticks spell a token letter by letter: `0110`.
 
-## A different voice (only when the user asks)
-Render a short comparison MP3 of SINGLE voices through this same pipeline (`narrator(k, "am_michael")`; each
-voice says its own name, then the same passage) and let them pick; then set VOICE. Kokoro's best-rated male
-voices are am_michael, am_fenrir and am_puck (C+), then bm_george and bm_fable (C); the best overall is
-af_heart (A). Community voice packs (.pt, 510x1x256 float32) can be loaded without torch: the tensor is the
-raw file `*/data/0` inside the .pt zip. The pronunciation pipeline is English only: narrate in English, also
-when the material is in another language.
+## Speed, pauses, voice
+Only through Kokoro's own settings at the top of speech_text.py: SPEED (lower = slower; 0.85 was chosen by
+ear; Kokoro speaks faster the longer its input, so judge a speed on block-sized samples, never on one long
+text: the same 0.72 that sounded right on a long sample was 25% too slow in real blocks), SENTENCE_PAUSE, CLAUSE_PAUSE, END_PAUSE, VOICE (a stock Kokoro voice name). Change one
+at a time, make a short sample, and let the user judge it by ear before using it in a video.
+The pronunciation pipeline is English only: narrate in English, also when the material is in another language.
