@@ -83,9 +83,12 @@ plugin; updating them is a deliberate change in `setup.sh`.
   `num2words`, `spacy`, `misaki`, `sherpa-onnx`.
 - The spaCy English model `en_core_web_sm` 3.8.0, from the
   [spacy-models release](https://github.com/explosion/spacy-models/releases/tag/en_core_web_sm-3.8.0) on GitHub.
-- The Kokoro v1.0 voice model and voices (about 350 MB), from the
-  [kokoro-onnx release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1) on GitHub.
-  Both files are checked against SHA-256 checksums that are written in the script.
+- The Kokoro v1.0 model (about 325 MB), from this repository's own
+  [release](https://github.com/TobiasSmid/explainer-video-skill/releases/tag/kokoro-model), so it keeps working
+  even if the original goes away; the original
+  [kokoro-onnx release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1) is the fallback.
+  Same file either way, checked against a SHA-256 checksum written in the script.
+- The narration voice is not downloaded: `narrator.npz` (0.5 MB) ships with the plugin.
 - The Moonshine base speech recognizer for the listen-back check (about 250 MB), from the
   [sherpa-onnx release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) on GitHub, also checked
   against a SHA-256 checksum. Without it, everything else still works.
@@ -105,12 +108,15 @@ otherwise into the virtualenv that is active, or into a new `.venv` in the worki
 - If the session is attached to a Claude Project, the skill tells Claude to save the scripts and scene files of
   your videos to that Project, so that a later session can continue the series. The videos themselves are
   given to you in the conversation, or as files in the working folder.
-- The default voice is a stock Kokoro voice.
+- The voice is Kokoro's stock am_puck voice made a little deeper (see below); no real person's voice.
 
 ## Changing the voice
 
-Ask Claude ("make the voice calmer", "let me hear a few other voices"). The settings are at the top of
-`speech_text.py`: `VOICE`, `SPEED` and the pauses (all Kokoro's own settings), and mispronounced words go into `CUSTOM`. A change
+There is one voice, `narrator.npz`: Kokoro's am_puck with every one of its tones shifted a little deeper
+(about 107 to 95 Hz). In testing it ended sentences more cleanly than plain am_puck (0 creaky endings in 40
+readings, against 6). Speed and pauses are Kokoro's own settings at the top of `speech_text.py`, and
+mispronounced words go into `CUSTOM`. Ask Claude for a change ("a bit slower"); see
+`skills/explainer-video/references/voice.md` for what is safe to change and what broke the voice before. A change
 holds for the session you make it in. Only the owner of this repository can make a change permanent, by
 pushing it here; everyone who installed the plugin then gets it at their next sync.
 

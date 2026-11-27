@@ -29,8 +29,11 @@ import numpy as np
 warnings.filterwarnings("ignore")
 
 # ---- The narration voice (all of it is Kokoro's own settings) ----
-VOICE = "am_puck"        # the stock Kokoro voice, used as is
-BRITISH = VOICE[0] == "b"  # a British voice (bm_/bf_) needs British sounds instead of American ones
+VOICE = "narrator"       # the skill's one voice (models/narrator.npz): Kokoro's am_puck with every one of its
+                         # 510 tones shifted a little deeper (about 107 -> 95 Hz). Kokoro still picks the tone
+                         # by input length, as with any stock voice. Tested: 0 creaky endings in 40 readings,
+                         # against 6 for plain am_puck. Chosen by ear (2026-11-27).
+BRITISH = False          # the narrator is an American voice
 SPEED = 0.85             # Kokoro's speed setting, chosen by ear: ~17 sounds/s in block-sized readings,
                          # about 130 words per minute with the pauses. Kokoro speaks faster the longer its
                          # input, so this value is for blocks of 2-5 sentences, not for one long text.
@@ -274,4 +277,6 @@ def settings() -> str:
     """Everything that changes the audio; part of the cache key, so a change re-makes the audio.
     The fingerprint of this file covers every rule; the rest covers the settings above."""
     code = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:12]
-    return repr((VOICE, SPEED, SENTENCE_PAUSE, CLAUSE_PAUSE, END_PAUSE, sorted(CUSTOM.items()), code))
+    voice = Path(__file__).resolve().parent / "models" / "narrator.npz"
+    voice = hashlib.sha1(voice.read_bytes()).hexdigest()[:12] if voice.exists() else ""
+    return repr((VOICE, SPEED, SENTENCE_PAUSE, CLAUSE_PAUSE, END_PAUSE, sorted(CUSTOM.items()), code, voice))

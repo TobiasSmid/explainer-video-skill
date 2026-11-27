@@ -29,7 +29,7 @@ def _engine():
         cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
         opts.intra_op_num_threads = cores or 1
         session = rt.InferenceSession(str(MODELS / "kokoro-timed.onnx"), opts, providers=["CPUExecutionProvider"])
-        _KOKORO = Kokoro.from_session(session, str(MODELS / "voices.bin"))
+        _KOKORO = Kokoro.from_session(session, str(MODELS / "narrator.npz"))  # the skill's one voice
     return _KOKORO
 
 

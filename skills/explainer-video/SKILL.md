@@ -71,7 +71,7 @@ mkdir -p $EX && cd $EX && bash "${CLAUDE_SKILL_DIR}/scripts/setup.sh" > setup.lo
 ```
 It copies the code into $EX, installs what is missing at the tested versions (LaTeX, ffmpeg, sox by apt;
 Python packages by pip) and downloads the Kokoro model and the listen-back recognizer into $EX/models
-(~600 MB; minutes the first time, seconds after). setup.log ends with SETUP OK and EXIT 0. Also look for:
+(~580 MB; about a minute the first time, seconds after). setup.log ends with SETUP OK and EXIT 0. Also look for:
 - `VENV <path>`: start every later command with `export PATH=<path>:$PATH;`.
 - `MISSING ...`: system packages it may not install (it never uses sudo); show the user the command, rerun later.
 - `KEPT <file>`: $EX holds a changed copy of a code file, left alone.

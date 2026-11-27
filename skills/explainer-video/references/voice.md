@@ -4,7 +4,8 @@ Read this when the user flags a word, asks about the voice, or wants it changed.
 `speech_text.py` (settings at the top); cached audio is re-made automatically after any change to that file.
 
 ## The setup: plain Kokoro, fed the right text (do not add audio processing)
-Each narration block is ONE Kokoro reading: the stock voice am_puck, Kokoro's speed setting (SPEED 0.85,
+Each narration block is ONE Kokoro reading: the skill's one voice (models/narrator.npz, see below), Kokoro's
+speed setting (SPEED 0.85,
 about 130 words per minute with pauses) and Kokoro's own pause setting (0.5 s at a sentence end, 0.15 s at
 a comma, only where Kokoro left a gap itself), plus 0.5 s of silence after the block. Nothing is cut,
 re-rendered or post-processed. The skill only decides the TEXT that goes in:
@@ -39,9 +40,19 @@ Add it to CUSTOM in speech_text.py (misaki phonemes, e.g. `"Kleene": "klˈAni"`)
 affected beats are re-made), and publish the change (references/publishing.md) so it stays fixed.
 Inline alternatives in a beat: `[Kleene](/klˈAni/)`; backticks spell a token letter by letter: `0110`.
 
+## The voice file
+`narrator.npz` (ships in scripts/, copied to models/ by setup) holds one Kokoro voice pack (510 tones, one per
+input length): am_puck + (-18) x a pitch direction, the same shift added to every tone, so Kokoro still picks
+the tone by length. The direction came from a regression of 24 male Kokoro voices' tone vectors on their
+measured pitch, brightness, melody and tempo. Tested on 8 blocks x 5 runs: 0 creaky endings (plain am_puck: 6),
+same pitch steadiness, same listen-back result. Kokoro adds a little randomness to every reading, so judge any
+voice change over several runs, never one. Shifting toward "darker" (brightness) or "calmer" (melody) brought
+the creaky endings back in every run: only the pitch shift is safe. A new voice file means: make it the same
+way, test it the same way, let the user judge it by ear, then publish it (references/publishing.md).
+
 ## Speed, pauses, voice
 Only through Kokoro's own settings at the top of speech_text.py: SPEED (lower = slower; 0.85 was chosen by
 ear; Kokoro speaks faster the longer its input, so judge a speed on block-sized samples, never on one long
-text: the same 0.72 that sounded right on a long sample was 25% too slow in real blocks), SENTENCE_PAUSE, CLAUSE_PAUSE, END_PAUSE, VOICE (a stock Kokoro voice name). Change one
+text: the same 0.72 that sounded right on a long sample was 25% too slow in real blocks), SENTENCE_PAUSE, CLAUSE_PAUSE, END_PAUSE. Change one
 at a time, make a short sample, and let the user judge it by ear before using it in a video.
 The pronunciation pipeline is English only: narrate in English, also when the material is in another language.

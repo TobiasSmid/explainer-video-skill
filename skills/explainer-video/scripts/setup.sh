@@ -2,8 +2,8 @@
 # Sets up the CURRENT folder as the working folder for explainer videos. Safe to run again.
 #   1. copies the code files that sit next to this script into the folder (copies already there are kept)
 #   2. installs what is missing: LaTeX, ffmpeg and sox (apt), manim and the voice packages (pip)
-#   3. downloads the Kokoro voice model and the speech recognizer for the listen-back check into ./models,
-#      and checks their checksums
+#   3. puts the narration voice (narrator.npz, part of this skill) and the Kokoro model into ./models, plus the
+#      speech recognizer for the listen-back check, and checks their checksums
 # Python packages are pinned to the versions this skill was tested with, so an upstream release cannot
 # break it; a folder with other versions is brought to the pinned ones.
 # It never uses sudo. As root (a disposable container such as Claude's cloud workspace) it installs
@@ -72,30 +72,35 @@ if ! py_ok; then
   py_ok || echo "WARNING: some Python packages are not at the tested versions (pip kept others); it may still work"
 fi
 
-# Kokoro model that reports timings (release model-files-v1.1). The older v1.0 file and the int8 file do not work.
-REL=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1
-fetch() {  # fetch <file> <url> <sha256>: download once, and refuse a file that is not the expected one
-  [ -f "models/$1" ] && return 0
-  curl -fsSL -o "models/$1.part" "$2"
-  local got
-  got=$(python3 -c "import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], 'rb').read()).hexdigest())" "models/$1.part")
-  if [ "$got" != "$3" ]; then
-    rm -f "models/$1.part"
-    echo "CHECKSUM MISMATCH for $1: got $got"
-    exit 1
-  fi
-  mv "models/$1.part" "models/$1"
+sha() { python3 -c "import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], 'rb').read()).hexdigest())" "$1"; }
+fetch() {  # fetch <file> <sha256> <url> [fallback url ...]: download once; refuse a file that is not the expected one
+  local file="$1" want="$2"; shift 2
+  [ -f "models/$file" ] && return 0
+  for url in "$@"; do
+    if curl -fsSL -o "models/$file.part" "$url" && [ "$(sha "models/$file.part")" = "$want" ]; then
+      mv "models/$file.part" "models/$file"
+      return 0
+    fi
+    rm -f "models/$file.part"
+  done
+  echo "DOWNLOAD FAILED or CHECKSUM MISMATCH for $file"
+  exit 1
 }
 mkdir -p models
-fetch kokoro-timed.onnx $REL/kokoro-v1.0.onnx beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a
-fetch voices.bin $REL/voices-v1.0.bin bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d
+# The narration voice: Kokoro's am_puck, every tone shifted a little deeper (it ships with this skill).
+cp "$SRC/narrator.npz" models/narrator.npz
+# Kokoro model that reports timings. From this skill's own GitHub release, so it keeps working if the original
+# goes away; the original kokoro-onnx release (model-files-v1.1) is the fallback. Same file, same checksum.
+fetch kokoro-timed.onnx beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a \
+  https://github.com/TobiasSmid/explainer-video-skill/releases/download/kokoro-model/kokoro-timed.onnx \
+  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.onnx
 
 # Speech recognizer for the listen-back check (Moonshine base, from the sherpa-onnx release on GitHub).
 # Without it everything else still works; prenarrate then skips the check.
 ASR=sherpa-onnx-moonshine-base-en-int8
 if [ ! -f "models/asr/$ASR/tokens.txt" ]; then
-  if (fetch asr.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$ASR.tar.bz2 \
-        21870cecaa2e44e4e2bf63e02d1072bed183ccd10284871353bd9d24dad14e5e); then
+  if (fetch asr.tar.bz2 21870cecaa2e44e4e2bf63e02d1072bed183ccd10284871353bd9d24dad14e5e \
+        https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$ASR.tar.bz2); then
     mkdir -p models/asr && tar xjf models/asr.tar.bz2 -C models/asr --exclude='*/test_wavs*' && rm -f models/asr.tar.bz2
   else
     echo "NO LISTEN: the speech recognizer could not be downloaded; the listen-back check is skipped"
